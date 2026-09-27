@@ -1,0 +1,30 @@
+# Python
+backend/venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+*.local
+
+# Data
+data/raw/*
+!data/raw/.gitkeep
+data/cfr/*
+!data/cfr/.gitkeep
+data/frames/*
+!data/frames/.gitkeep
+data/labels/*
+!data/labels/.gitkeep
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
