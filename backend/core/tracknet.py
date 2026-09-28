@@ -7,12 +7,16 @@ forward pass is not run every frame: `batch_stride` controls how many NEW frames
 arrive between forward passes, independent of the (fixed) window size. Re-running the
 network every frame (batch_stride=1, "dense") costs ~seq_len times more GPU work than
 running it once every seq_len frames (batch_stride=seq_len, "nonoverlap") -- measured
-on this project's GPU (T550 4GB): 364 ms/window either way, i.e. ~2.7 FPS dense vs
-~22 FPS nonoverlap (see scripts/bench_tracknet_forward.py). We default to nonoverlap
-for throughput, but expose batch_stride because nonoverlap's 1-in-8 detection rate is
-too coarse for RallyUmpire's landing-rest detection (it needs to see the shuttle slow
-down over a couple of consecutive frames, which nonoverlap mostly skips over); a
-smaller stride such as 2-4 recovers temporal resolution at a proportional GPU cost.
+on this project's GPU (T550 4GB) in FP32 (see `use_half` below): 103 ms/window either
+way, i.e. ~9.7 FPS dense vs ~77 FPS nonoverlap (see scripts/bench_tracknet_forward.py).
+An earlier FP16 measurement on this same GPU showed 364 ms/window -- FP16 was both
+~3.5x SLOWER (this GPU has no real FP16 throughput advantage) and numerically unsafe
+(see `use_half`), so it is no longer the default; do not compare FP16 and FP32 timings
+as a speed/accuracy tradeoff, FP32 wins both. We default to nonoverlap for throughput,
+but expose batch_stride because nonoverlap's 1-in-8 detection rate is too coarse for
+RallyUmpire's landing-rest detection (it needs to see the shuttle slow down over a
+couple of consecutive frames, which nonoverlap mostly skips over); a smaller stride
+such as 2-4 recovers temporal resolution at a proportional GPU cost.
 
 Whatever the stride, `generate()` only has fresh candidates on the calls where a batch
 resolves; the other calls return empty arrays. This is deliberately compatible with
@@ -86,7 +90,8 @@ def scale_candidates(cands, roi, network_size=(WIDTH, HEIGHT)):
 
 
 class TrackNetCandidateSource:
-    def __init__(self, weights_path=None, device=None, batch_stride=None, conf_threshold=0.5, bg_frames=60):
+    def __init__(self, weights_path=None, device=None, batch_stride=None, conf_threshold=0.5, bg_frames=60,
+                 use_half=False):
         """
         weights_path: path to TrackNet_best.pt (see QUICK_START.md for the download step).
         batch_stride: how many new frames arrive between forward passes; None = seq_len
@@ -102,6 +107,13 @@ class TrackNetCandidateSource:
                    the checkpoint's bg_mode needs (median, same technique as
                    CourtCalibrator.extract_clean_background). Skipped if the
                    checkpoint's bg_mode is '' (no background channel).
+        use_half: FP16 on CUDA. Defaults to False -- measured on this project's reference
+                  GPU (T550 4GB, torch 2.5.1+cu121), FP16 overflows to non-finite on ~80%
+                  of forward passes for this checkpoint, silently collapsing the real
+                  detection rate from ~3% of frames to ~0% (the non-finite guard below
+                  swallows it as "no detection" instead of erroring). FP32 on the same GPU
+                  restores the ~3% rate with zero non-finite batches. Only pass True if
+                  you've verified finite outputs on your specific GPU/torch/cuDNN build.
         """
         weights_path = weights_path or DEFAULT_WEIGHTS_PATH
         if not os.path.exists(weights_path):
@@ -120,7 +132,7 @@ class TrackNetCandidateSource:
         self.model = TrackNet(in_dim=in_dim, out_dim=self.seq_len).to(self.device)
         self.model.load_state_dict(ckpt["model"])
         self.model.eval()
-        self.use_half = self.device.type == "cuda"
+        self.use_half = use_half and self.device.type == "cuda"
         if self.use_half:
             self.model = self.model.half()
         if self.device.type == "cuda":
@@ -204,8 +216,10 @@ class TrackNetCandidateSource:
         # seq_len-1 heatmaps were for frames already returned (empty) to the caller.
         heat = y[0, -1].float().cpu().numpy()
         if not np.isfinite(heat).all():
-            # rare FP16/cudnn numerical hiccup observed on this GPU; treat as no detection
-            # this batch rather than let NaN silently propagate into candidate coordinates.
+            # Defensive fallback, expected to be rare now that use_half defaults to False
+            # (with FP16 on this project's GPU this fired on ~80% of batches -- see
+            # use_half's docstring above). Treat as no detection rather than let NaN
+            # silently propagate into candidate coordinates.
             logger.warning("Non-finite TrackNet heatmap, treating this batch as no detection.")
             return np.empty((0, 2), dtype=np.float64), np.empty((0,), dtype=np.float64), np.zeros_like(heat)
         cands, confs = heatmap_to_candidates(heat, self.conf_threshold)

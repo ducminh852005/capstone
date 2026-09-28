@@ -42,6 +42,24 @@ The system is modularized into independent computer vision pipelines that can be
 - Extracts the "foot point" (bottom-center of the bounding box).
 - Uses `H_inv` to map the foot point onto a static 2D green minimap, drawing translucent red circles to form a movement heatmap.
 
+### E. TrackNet Shuttle Detector (`core/tracknet.py`) -- FP16 correctness/perf fix
+The default `--shuttle-backend` is `tracknet` (a CNN candidate source feeding the same Physics-Based Tracker as section B), not the classical CV backend described there.
+
+**Bug found and fixed: never run TrackNet in FP16 on this project's reference GPU (T550 Laptop, 4GB).** `TrackNetCandidateSource` used to default `use_half = (device.type == "cuda")`, i.e. FP16 automatically whenever CUDA was available. Measured on this GPU with real video frames: **FP16 overflowed to non-finite output on ~80% of forward passes** (silently caught by an existing guard that logs a warning and treats the batch as "no detection" instead of crashing), collapsing real shuttle detection from ~3% of frames to effectively 0% -- with no error, no crash, just an empty trajectory. This surfaced after upgrading torch to a CUDA build (`cu121`) to actually use the GPU (see git history / conversation log around the initial "torch runs on CPU" fix) -- the same checkpoint had apparently been more stable under whatever torch/cuDNN build was in use before.
+
+Forcing FP32 on the same GPU didn't just fix correctness, it was also **~3.5x faster** (103 ms/window vs. FP16's 364 ms/window) -- this GPU has no real FP16 throughput advantage, so FP16 was strictly worse on both counts, not a speed/accuracy tradeoff. `use_half` now defaults to `False` in `TrackNetCandidateSource.__init__` (`core/tracknet.py`); only pass `use_half=True` after verifying finite output on your specific GPU/torch/cuDNN combination.
+
+Full-pipeline effect, measured on `data/cfr/tran04_cam1.mp4`, 1800 frames (`data/benchmarks/tracknet_fp32fix.json` vs. the broken-FP16 `tracknet.json`):
+
+| | FP16 (broken, old default) | FP32 (fixed, new default) |
+|---|---|---|
+| wall_fps | 9.67 | **15.97** |
+| shuttle ms/frame | 55.11 | **21.25** |
+| pct_frames_detected | 3.2% | **3.6%** |
+| non-finite batches | frequent (see above) | none |
+
+Cross-check with `scripts/bench_tracknet_forward.py` (raw forward-pass latency, no video/CV overhead): now defaults to `use_half = False` to match, so it reports the same ~103 ms/window number instead of the old (fast-looking but broken) 364 ms/window FP16 figure -- treat any future FP16 timing on a *different* GPU as a correctness question first, a speed question second.
+
 ---
 
 ## 3. Workflow & Usage Instructions

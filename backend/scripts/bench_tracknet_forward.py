@@ -47,7 +47,9 @@ def main():
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model built OK. {n_params / 1e6:.1f}M parameters.")
 
-    use_half = device.type == "cuda"
+    # FP16 measured unsafe (non-finite output) AND slower than FP32 on this project's
+    # reference GPU (T550) -- see core/tracknet.py's use_half docstring. Match its default.
+    use_half = False
     if use_half:
         model = model.half()
     if device.type == "cuda":
