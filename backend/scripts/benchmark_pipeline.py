@@ -124,7 +124,13 @@ def main():
     ap.add_argument("--stages", default="player,shuttle")
     ap.add_argument("--out", default=None)
     ap.add_argument("--pose-variant", default=None, help="new API only: lite|heavy")
-    ap.add_argument("--bg-method", default=None, help="new API only: knn|mog2")
+    ap.add_argument("--bg-method", default=None, help="cv shuttle backend only: knn|mog2")
+    ap.add_argument("--shuttle-backend", default="tracknet", choices=["cv", "tracknet"],
+                     help="new API only: candidate generator for ShuttleDetector (default: tracknet)")
+    ap.add_argument("--tracknet-stride", type=int, default=None,
+                     help="tracknet backend only: frames between forward passes (default: seq_len, nonoverlap)")
+    ap.add_argument("--tracknet-conf", type=float, default=None,
+                     help="tracknet backend only: heatmap confidence threshold (default: 0.5)")
     args = ap.parse_args()
     stages = set(args.stages.split(","))
 
@@ -143,8 +149,18 @@ def main():
         tracker.pose_estimator.extract_foot_point = timer.wrap("pose", tracker.pose_estimator.extract_foot_point)
     if "shuttle" in stages:
         kwargs = {}
-        if NEW_API and args.bg_method:
-            kwargs["bg_method"] = args.bg_method
+        if NEW_API:
+            kwargs["backend"] = args.shuttle_backend
+            if args.bg_method and args.shuttle_backend == "cv":
+                kwargs["bg_method"] = args.bg_method
+            if args.shuttle_backend == "tracknet" and (args.tracknet_stride or args.tracknet_conf):
+                tnk = {}
+                if args.tracknet_stride:
+                    tnk["batch_stride"] = args.tracknet_stride
+                if args.tracknet_conf:
+                    tnk["conf_threshold"] = args.tracknet_conf
+                    kwargs["init_min_confidence"] = args.tracknet_conf
+                kwargs["tracknet_kwargs"] = tnk
         detector = ShuttleDetector(**kwargs)
         new_shuttle = "roi" in inspect.signature(detector.detect).parameters
 

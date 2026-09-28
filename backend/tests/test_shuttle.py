@@ -21,7 +21,7 @@ def render(points, bg=40):
 
 def test_tracks_parabola_through_distractors_and_dropouts():
     rng = np.random.default_rng(1)
-    det = ShuttleDetector()
+    det = ShuttleDetector(backend="cv")
     dropped = set(range(30, 34))
     errors, false_hits = [], 0
     for t in range(50):
@@ -53,7 +53,7 @@ def test_tracks_parabola_through_distractors_and_dropouts():
 
 
 def test_static_flicker_never_starts_a_track():
-    det = ShuttleDetector()
+    det = ShuttleDetector(backend="cv")
     for t in range(40):
         blobs = [(900, 400)] if t % 2 == 0 else []
         blobs += [(300, 800)] if t % 3 == 0 else []
@@ -63,7 +63,7 @@ def test_static_flicker_never_starts_a_track():
 
 
 def test_player_body_blobs_are_ignored():
-    det = ShuttleDetector()
+    det = ShuttleDetector(backend="cv")
     box = (800, 300, 1000, 800)
     for t in range(20):
         # a limb moving consistently inside the lower body region of the player
@@ -72,7 +72,7 @@ def test_player_body_blobs_are_ignored():
 
 
 def test_slow_track_does_not_slide_onto_player_legs():
-    det = ShuttleDetector()
+    det = ShuttleDetector(backend="cv")
     box = (800, 300, 1000, 800)   # lower 2/3 starts at y = 466
     for t in range(40):
         y = 250 + 6 * t           # racket-like blob moving slowly down into the body
@@ -82,7 +82,7 @@ def test_slow_track_does_not_slide_onto_player_legs():
 
 
 def test_spectator_boxes_are_ignored():
-    det = ShuttleDetector()
+    det = ShuttleDetector(backend="cv")
     box = (100, 100, 400, 900)
     for t in range(20):
         pt, _ = det.detect(render([(250, 200 + 8 * t)]), exclude_boxes=[box])
@@ -90,7 +90,7 @@ def test_spectator_boxes_are_ignored():
 
 
 def test_overlong_track_is_ended():
-    det = ShuttleDetector(max_track_len=30)
+    det = ShuttleDetector(backend="cv", max_track_len=30)
     longest = 0
     for t in range(60):
         det.detect(render([(300 + 10 * t, 500)]))

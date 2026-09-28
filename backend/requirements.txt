@@ -12,3 +12,11 @@ alembic
 mediapipe
 scipy
 pytest
+gdown
+
+# torch/torchvision are NOT listed here on purpose: the plain PyPI wheel is CPU-only
+# and `pip install -r requirements.txt` would silently replace a working CUDA build.
+# Install the CUDA build explicitly instead, e.g. for CUDA 12.1:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+# (this project's ShuttleDetector(backend="tracknet") needs torch; CPU-only also works,
+# just much slower -- see scripts/bench_tracknet_forward.py)

@@ -13,7 +13,7 @@ from core.umpire import RallyUmpire, match_type_from_metadata
 from core.video_io import ThreadedVideoReader
 
 
-def test_auto_umpire(video_path):
+def test_auto_umpire(video_path, shuttle_backend="tracknet"):
     print(f"Opening video: {video_path}")
     H, H_inv = court_model.load_calibration()
     if H is None:
@@ -26,7 +26,14 @@ def test_auto_umpire(video_path):
     match_type = match_type_from_metadata(video_path)
     print(f"Match type: {match_type}, shuttle ROI: {roi}")
 
-    detector = ShuttleDetector()
+    try:
+        detector = ShuttleDetector(backend=shuttle_backend)
+    except FileNotFoundError as e:
+        if shuttle_backend != "tracknet":
+            raise
+        print(f"WARNING: {e}\nFalling back to backend='cv'.")
+        detector = ShuttleDetector(backend="cv")
+    print(f"Shuttle backend: {detector.backend}")
     # people detection is only used to mask bodies/spectators out of the shuttle candidates
     tracker = PlayerTracker(model_path="yolov8n.pt", conf_thresh=0.5, fps=reader.fps)
     umpire = RallyUmpire(H_inv, match_type=match_type, frame_size=(h, w), roi=roi,
@@ -97,7 +104,8 @@ def test_auto_umpire(video_path):
                 cv2.circle(annotated, last_landing_pt, radius, alert_color, -1)
 
         mask_bgr = cv2.cvtColor(fg_mask, cv2.COLOR_GRAY2BGR)
-        cv2.putText(mask_bgr, "Background Subtractor Mask", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+        mask_label = "Background Subtractor Mask" if detector.backend == "cv" else "TrackNet Heatmap"
+        cv2.putText(mask_bgr, mask_label, (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
 
         combined = cv2.hconcat([cv2.resize(annotated, (640, 360)), cv2.resize(mask_bgr, (640, 360))])
         cv2.imshow("Left: Auto Umpire (Hawk-Eye) | Right: Mask", combined)
@@ -110,4 +118,5 @@ def test_auto_umpire(video_path):
 
 if __name__ == "__main__":
     target_video = sys.argv[1] if len(sys.argv) > 1 else r"..\data\cfr\tran04_cam1.mp4"
-    test_auto_umpire(target_video)
+    backend = sys.argv[2] if len(sys.argv) > 2 else "tracknet"
+    test_auto_umpire(target_video, backend)

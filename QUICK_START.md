@@ -34,6 +34,25 @@ Ensure you have the following installed on your system:
    pip install -r requirements.txt
    pip install mediapipe
    ```
+4. Install PyTorch with CUDA (needed for `ShuttleDetector(backend="tracknet")`; not in
+   requirements.txt on purpose, see the comment there):
+   ```cmd
+   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+   ```
+5. Download the shuttlecock tracker weights ([TrackNetV3](https://github.com/qaz812345/TrackNetV3),
+   MIT license) and place `TrackNet_best.pt` directly under `backend/` (same folder as
+   `yolov8n.pt` and the MediaPipe `.task` files):
+   ```cmd
+   pip install gdown
+   gdown "https://drive.google.com/uc?id=1CfzE87a0f6LhBp0kniSl1-89zaLCZ8cA" -O ckpts.zip
+   tar -xf ckpts.zip ckpts/TrackNet_best.pt
+   move ckpts\TrackNet_best.pt backend\TrackNet_best.pt
+   ```
+   Then sanity-check it loads and measure its speed on your GPU:
+   ```cmd
+   cd backend
+   python scripts\bench_tracknet_forward.py
+   ```
 
 ### Frontend Setup
 1. Navigate to the frontend directory:
@@ -105,8 +124,11 @@ Headless benchmark of the player + shuttle pipeline (per-stage ms/frame and qual
 ```cmd
 python scripts\benchmark_pipeline.py ..\data\cfr\tran04_cam1.mp4 --frames 1800 --out ..\data\benchmarks\run.json
 ```
-Quality numbers are proxies (ID stability, track continuity, shuttle jumps) until hand labels exist.
-Laptop GPUs throttle: compare runs made back to back, not runs from different sessions.
+`ShuttleDetector` defaults to `backend="tracknet"` (needs `TrackNet_best.pt`, see step 5 above);
+pass `--shuttle-backend cv` to use the older classical background-subtraction detector instead
+(no GPU/weights needed). Quality numbers are proxies (ID stability, track continuity, shuttle
+jumps) until hand labels exist. Laptop GPUs throttle: compare runs made back to back, not runs
+from different sessions.
 
 ## 7. Running the Application (Coming Soon)
 

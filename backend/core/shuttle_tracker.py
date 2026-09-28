@@ -3,6 +3,8 @@ import cv2
 import numpy as np
 import logging
 
+from .tracknet import TrackNetCandidateSource
+
 logger = logging.getLogger(__name__)
 
 CHI2_2DOF_99 = 9.21
@@ -150,20 +152,15 @@ class ConstantAccelerationKalman:
         return out
 
 
-class ShuttleDetector:
-    def __init__(self, bg_method="knn", min_area=2, max_area=500, max_merged_area=900, max_elongation=6.0,
-                 max_candidates=150, max_coast=8, max_track_len=180, min_gate_px=15.0, min_body_speed=8.0,
-                 init_max_residual_px=12.0, init_speed_px=(5.0, 150.0)):
-        """
-        Classical-CV shuttle tracker: background subtraction -> blob candidates ->
-        constant-acceleration Kalman tracking with Mahalanobis gating.
+class CVCandidateSource:
+    """
+    Classical-CV candidate generator: background subtraction -> blob candidates.
+    This is the original ShuttleDetector implementation, unchanged, just factored out
+    behind the same generate(frame, roi) -> (candidates, confidences, mask) interface
+    that TrackNetCandidateSource (core/tracknet.py) also implements.
+    """
 
-        A track is only started from three consecutive candidates moving consistently
-        (roughly constant velocity, speed within init_speed_px), which rejects static
-        flicker such as ceiling lights. A track survives up to max_coast frames without
-        a matching candidate, then ends. A single flight never lasts more than a few seconds,
-        so tracks longer than max_track_len frames (locked on clutter) are ended as well.
-        """
+    def __init__(self, bg_method="knn", min_area=2, max_area=500, max_merged_area=900, max_elongation=6.0):
         self.processor = ShuttleTrajectoryProcessor()
         if bg_method == "knn":
             self.bg_subtractor = cv2.createBackgroundSubtractorKNN(history=50, dist2Threshold=400, detectShadows=False)
@@ -177,21 +174,6 @@ class ShuttleDetector:
         # one 9x9 dilation == two 5x5 dilations, in a single pass
         self.merge_kernel = np.ones((9, 9), np.uint8)
         self.max_elongation = max_elongation
-        self.max_candidates = max_candidates
-        self.max_coast = max_coast
-        self.max_track_len = max_track_len
-        self.min_gate_px = min_gate_px
-        self.min_body_speed = min_body_speed
-        self.init_max_residual = init_max_residual_px
-        self.init_speed = init_speed_px
-
-        self.kf = ConstantAccelerationKalman()
-        self.track_active = False
-        self.misses = 0
-        self.track_len = 0
-        self._recent_candidates = []   # candidate arrays of the last 2 frames, for track initiation
-        self.trajectory = []           # one (x, y) or None per detect() call, full-frame pixels
-        self.last_roi = None
 
     def _extract_candidates(self, fg_mask, offset):
         """
@@ -217,6 +199,73 @@ class ShuttleDetector:
                 cands.append((m["m10"] / m["m00"] + x + offset[0], m["m01"] / m["m00"] + y + offset[1]))
         return np.array(cands, dtype=np.float64).reshape(-1, 2), merged
 
+    def generate(self, frame, roi):
+        x0, y0 = 0, 0
+        if roi is not None:
+            x0, y0, x1, y1 = roi
+            frame = frame[y0:y1, x0:x1]
+
+        processed = self.processor.preprocess_frame_for_tracking(frame)
+        fg_mask = self.bg_subtractor.apply(processed)
+        _, fg_mask = cv2.threshold(fg_mask, 200, 255, cv2.THRESH_BINARY)
+
+        cands, mask = self._extract_candidates(fg_mask, (x0, y0))
+        return cands, np.ones(len(cands)), mask
+
+
+class ShuttleDetector:
+    def __init__(self, backend="tracknet", tracknet_path=None, tracknet_kwargs=None,
+                 bg_method="knn", min_area=2, max_area=500, max_merged_area=900, max_elongation=6.0,
+                 max_candidates=150, max_coast=None, max_track_len=180, min_gate_px=15.0, min_body_speed=8.0,
+                 init_max_residual_px=12.0, init_speed_px=(5.0, 150.0), init_min_confidence=0.6, simple_init=None):
+        """
+        Shuttle tracker: pluggable candidate generation (backend="cv" classical background
+        subtraction, backend="tracknet" TrackNetV3 heatmap regression) feeding a shared
+        constant-acceleration Kalman tracker with Mahalanobis gating. See core/tracknet.py
+        for why TrackNetV3 uses a different (simpler, confidence-based) track-initiation
+        rule than the CV backend's 3-consecutive-frame consistency check.
+
+        A track survives up to max_coast frames without a matching candidate, then ends.
+        A single flight never lasts more than a few seconds, so tracks longer than
+        max_track_len frames (locked on clutter) are ended as well.
+
+        backend="cv" params: bg_method, min_area, max_area, max_merged_area, max_elongation,
+            init_max_residual_px, init_speed_px (3-frame init consistency check).
+        backend="tracknet" params: tracknet_path (default backend/TrackNet_best.pt),
+            tracknet_kwargs (dict, forwarded to TrackNetCandidateSource: batch_stride,
+            conf_threshold, bg_frames, device), init_min_confidence (single-point init).
+        """
+        if backend == "cv":
+            self._source = CVCandidateSource(bg_method=bg_method, min_area=min_area, max_area=max_area,
+                                             max_merged_area=max_merged_area, max_elongation=max_elongation)
+            self.simple_init = False if simple_init is None else simple_init
+            self.max_coast = 8 if max_coast is None else max_coast
+        elif backend == "tracknet":
+            self._source = TrackNetCandidateSource(tracknet_path, **(tracknet_kwargs or {}))
+            self.simple_init = True if simple_init is None else simple_init
+            # nonoverlap batching only reports a real detection every batch_stride frames;
+            # give coast enough headroom to ride out that structural gap plus a few misses.
+            self.max_coast = max(12, self._source.batch_stride + 4) if max_coast is None else max_coast
+        else:
+            raise ValueError(f"Unknown backend {backend!r}, expected 'cv' or 'tracknet'")
+        self.backend = backend
+
+        self.max_candidates = max_candidates
+        self.max_track_len = max_track_len
+        self.min_gate_px = min_gate_px
+        self.min_body_speed = min_body_speed
+        self.init_max_residual = init_max_residual_px
+        self.init_speed = init_speed_px
+        self.init_min_confidence = init_min_confidence
+
+        self.kf = ConstantAccelerationKalman()
+        self.track_active = False
+        self.misses = 0
+        self.track_len = 0
+        self._recent_candidates = []   # candidate arrays of the last 2 frames, for track initiation
+        self.trajectory = []           # one (x, y) or None per detect() call, full-frame pixels
+        self.last_roi = None
+
     @staticmethod
     def _in_boxes(pts, boxes, top_frac=0.0):
         """True for points inside any box, ignoring the top `top_frac` of each box."""
@@ -227,7 +276,7 @@ class ShuttleDetector:
         return inside
 
     def _try_init(self, cands):
-        """Find c1, c2, c3 in three consecutive frames with c3 ~ 2*c2 - c1. Returns the triple or None."""
+        """CV backend: find c1, c2, c3 in three consecutive frames with c3 ~ 2*c2 - c1."""
         if len(self._recent_candidates) < 2:
             return None
         A, B = self._recent_candidates
@@ -247,6 +296,23 @@ class ShuttleDetector:
             return None
         return A[ia], B[ib], cands[ic]
 
+    def _try_init_simple(self, cands, confs):
+        """
+        TrackNet backend: start a track from a single confident candidate instead of
+        waiting for 3-frame consistency (batched inference only reports a candidate
+        every batch_stride frames, so consecutive-frame consistency rarely applies; a
+        purpose-trained detector's confident hits are precise enough to trust directly).
+        Reuses ConstantAccelerationKalman.init(p1,p2,p3) with all three equal (zero
+        initial velocity/acceleration -- the filter converges after a couple of updates).
+        """
+        if not len(cands):
+            return None
+        i = int(np.argmax(confs)) if len(confs) else 0
+        if len(confs) and confs[i] < self.init_min_confidence:
+            return None
+        p = cands[i]
+        return p, p, p
+
     def detect(self, frame, roi=None, exclude_boxes=None, player_boxes=None):
         """
         Detects the shuttle in one frame.
@@ -256,25 +322,19 @@ class ShuttleDetector:
         player_boxes: boxes of players; candidates on the lower 2/3 (legs/torso) are ignored
                       unless the running track matches them while moving faster than
                       min_body_speed px/frame (keeps the shuttle at the moment of a hit).
-        Returns (point or None, merged foreground mask of the processed ROI).
+        Returns (point or None, a mask sized to the ROI for display -- the foreground mask
+        for backend="cv", the most recently resolved heatmap for backend="tracknet").
         """
-        x0, y0 = 0, 0
-        if roi is not None:
-            x0, y0, x1, y1 = roi
-            frame = frame[y0:y1, x0:x1]
         self.last_roi = roi
+        cands, confs, mask = self._source.generate(frame, roi)
 
-        processed = self.processor.preprocess_frame_for_tracking(frame)
-        fg_mask = self.bg_subtractor.apply(processed)
-        _, fg_mask = cv2.threshold(fg_mask, 200, 255, cv2.THRESH_BINARY)
-
-        cands, fg_mask = self._extract_candidates(fg_mask, (x0, y0))
         if len(cands) > self.max_candidates:
             # global change (camera shake, light flicker): no reliable measurement this frame
-            cands = cands[:0]
+            cands, confs = cands[:0], confs[:0]
 
         if exclude_boxes is not None and len(exclude_boxes) and len(cands):
-            cands = cands[~self._in_boxes(cands, exclude_boxes)]
+            keep = ~self._in_boxes(cands, exclude_boxes)
+            cands, confs = cands[keep], confs[keep]
 
         on_body = np.zeros(len(cands), dtype=bool)
         if player_boxes is not None and len(player_boxes) and len(cands):
@@ -301,9 +361,9 @@ class ShuttleDetector:
             if self.misses > self.max_coast or self.track_len > self.max_track_len:
                 self.track_active = False
 
-        cands = cands[~on_body]
+        cands, confs = cands[~on_body], confs[~on_body]
         if not self.track_active:
-            triple = self._try_init(cands)
+            triple = self._try_init_simple(cands, confs) if self.simple_init else self._try_init(cands)
             if triple is not None:
                 c1, c2, c3 = triple
                 self.kf.init(c1, c2, c3)
@@ -311,14 +371,16 @@ class ShuttleDetector:
                 self.misses = 0
                 self.track_len = 0
                 best_pt = (int(round(c3[0])), int(round(c3[1])))
-                # the two previous frames belong to the new track as well
+                # the two previous frames belong to the new track as well (only meaningful
+                # for the CV backend's 3-consecutive-frame init; a no-op duplicate write
+                # for the simple/single-point init, where c1 == c2 == c3)
                 for back, c in ((1, c2), (2, c1)):
                     if len(self.trajectory) >= back and self.trajectory[-back] is None:
                         self.trajectory[-back] = (int(round(c[0])), int(round(c[1])))
 
         self._recent_candidates = (self._recent_candidates + [cands])[-2:]
         self.trajectory.append(best_pt)
-        return best_pt, fg_mask
+        return best_pt, mask
 
     def predict_ahead(self, n_frames):
         """Kalman extrapolation of the active track for the next n frames ([] if no track)."""
