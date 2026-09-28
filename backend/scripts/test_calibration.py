@@ -1,3 +1,4 @@
+import argparse
 import os
 import sys
 import cv2
@@ -5,6 +6,7 @@ import numpy as np
 import json
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from core import court_model
 from core.court_calibration import CourtCalibrator
 
 # Global variables for drag and drop
@@ -12,108 +14,113 @@ image_points = []
 dragging_idx = -1
 hover_idx = -1
 
-def interactive_calibration(image_path):
-    global image_points, dragging_idx, hover_idx
-    
-    image = cv2.imread(image_path)
+LABELS = ["Bottom-Left", "Bottom-Right", "Net-Left", "Net-Right"]
+
+
+def interactive_calibration(image_path=None, video_path=None):
+    global image_points
+
+    calibrator = CourtCalibrator()
+    if video_path:
+        print("Building a clean background (median of 60 frames)...")
+        image = calibrator.extract_clean_background(video_path)
+    else:
+        image = cv2.imread(image_path)
     if image is None:
-        print(f"Cannot load image from {image_path}")
+        print(f"Cannot load image from {video_path or image_path}")
         return
 
-    # Start with 4 default points forming a rectangle in the middle of the screen
+    # Start from the saved corners if any, else a rectangle in the middle of the screen
     h, w = image.shape[:2]
-    image_points = [
-        [w//4, h*3//4],     # 0: Bottom-Left
-        [w*3//4, h*3//4],   # 1: Bottom-Right
-        [w//4, h//4],       # 2: Net-Left
-        [w*3//4, h//4]      # 3: Net-Right
-    ]
-    
-    world_points = [
-        (0, 0),         # Bottom-Left
-        (0, 6.10),      # Bottom-Right
-        (6.70, 0),      # Net-Left
-        (6.70, 6.10)    # Net-Right
-    ]
-    
-    calibrator = CourtCalibrator()
-    
+    config_path = court_model.DEFAULT_CALIB_PATH
+    image_points = [[w // 4, h * 3 // 4], [w * 3 // 4, h * 3 // 4], [w // 4, h // 4], [w * 3 // 4, h // 4]]
+    if os.path.exists(config_path):
+        with open(config_path) as f:
+            image_points = [list(map(int, p)) for p in json.load(f).get("image_points", image_points)]
+
+    world_points = court_model.CALIB_WORLD_POINTS
+    refined_H = None  # set by 'R', cleared as soon as a point is dragged
+    status = ""
+
     def mouse_callback(event, x, y, flags, param):
-        global image_points, dragging_idx, hover_idx
-        
-        # Check hover
+        global dragging_idx, hover_idx
+        nonlocal refined_H
+
         hover_idx = -1
         for i, pt in enumerate(image_points):
             if np.linalg.norm(np.array(pt) - np.array([x, y])) < 20:
                 hover_idx = i
                 break
-                
+
         if event == cv2.EVENT_LBUTTONDOWN:
             if hover_idx != -1:
                 dragging_idx = hover_idx
-        
         elif event == cv2.EVENT_MOUSEMOVE:
             if dragging_idx != -1:
                 image_points[dragging_idx] = [x, y]
-                
+                refined_H = None
         elif event == cv2.EVENT_LBUTTONUP:
             dragging_idx = -1
 
-    window_name = "Interactive Calibration (Drag the Red Points) - Press SPACE to Save"
+    window_name = "Interactive Calibration (Drag the Red Points) - R: refine, SPACE: save"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(window_name, 1280, 720)
     cv2.setMouseCallback(window_name, mouse_callback)
-    
+
     print("---------------------------------------------------")
     print("INTERACTIVE CALIBRATION MODE")
     print("Drag the 4 RED DOTS to the following corners of the NEAR HALF COURT:")
-    print("1. Bottom-Left")
-    print("2. Bottom-Right")
-    print("3. Net-Left")
-    print("4. Net-Right")
-    print("Press SPACE or ENTER when you are done.")
+    for i, label in enumerate(LABELS, start=1):
+        print(f"{i}. {label}")
+    print("Press R to refine the homography on the white lines,")
+    print("SPACE or ENTER to save, Q or ESC to quit.")
     print("---------------------------------------------------")
 
     while True:
         display_img = image.copy()
-        
-        # Calculate Homography and draw the green court real-time
-        try:
-            H = calibrator.get_rough_homography(display_img, image_points, world_points)
-            if H is not None:
-                display_img = calibrator.draw_court_frame(display_img, H)
-        except Exception as e:
-            pass
-            
-        # Draw the draggable points on top
+
+        H = refined_H if refined_H is not None else calibrator.get_rough_homography(display_img, image_points, world_points)
+        if H is not None:
+            display_img = calibrator.draw_court_frame(display_img, H)
+
         for i, pt in enumerate(image_points):
             color = (0, 255, 0) if i == hover_idx else (0, 0, 255)
             cv2.circle(display_img, tuple(pt), 8, color, -1)
-            # Label
-            labels = ["Bottom-Left", "Bottom-Right", "Net-Left", "Net-Right"]
-            cv2.putText(display_img, labels[i], (pt[0]+10, pt[1]-10), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            cv2.putText(display_img, labels[i], (pt[0]+10, pt[1]-10), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
-                        
+            cv2.putText(display_img, LABELS[i], (pt[0] + 10, pt[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(display_img, LABELS[i], (pt[0] + 10, pt[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
+        if status:
+            cv2.putText(display_img, status, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
+
         cv2.imshow(window_name, display_img)
-        
+
         key = cv2.waitKey(15) & 0xFF
-        if key == 32 or key == 13: # Space or Enter
-            # Save to JSON
-            config_path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "calibration.json")
+        if key in (ord('r'), ord('R')) and H is not None:
+            rough_H = calibrator.get_rough_homography(image, image_points, world_points)
+            mask = calibrator.extract_white_lines(image, rough_H)
+            before = calibrator.line_overlap_score(mask, rough_H)
+            refined_H, after = calibrator.refine_homography(mask, rough_H)
+            status = f"Line overlap: {100 * before:.1f}% -> {100 * after:.1f}%"
+            print(status)
+        elif key in (32, 13):  # Space or Enter
+            data = {"image_points": image_points}
+            if refined_H is not None:
+                data["H"] = refined_H.tolist()
             with open(config_path, "w") as f:
-                json.dump({"image_points": image_points}, f)
-            print(f"Calibration points saved to {config_path}!")
+                json.dump(data, f)
+            print(f"Calibration saved to {config_path}{' (with refined H)' if refined_H is not None else ''}!")
             break
-        elif key == ord('q') or key == 27: # Q or Esc
+        elif key in (ord('q'), 27):  # Q or Esc
             break
-            
+
     cv2.destroyAllWindows()
 
+
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python test_calibration.py <path_to_image>")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("image", nargs="?", help="sample frame of the video")
+    ap.add_argument("--video", help="build a clean background from this video instead (recommended for refinement)")
+    args = ap.parse_args()
+    if not args.image and not args.video:
+        print("Usage: python test_calibration.py <path_to_image> | --video <path_to_video>")
         sys.exit(1)
-        
-    interactive_calibration(sys.argv[1])
+    interactive_calibration(args.image, args.video)

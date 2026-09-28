@@ -1,0 +1,23 @@
+{
+  "video": "tran04_cam1.mp4",
+  "api": "old",
+  "frames": 1800,
+  "wall_fps": 16.17,
+  "ms_per_frame": {
+    "decode_wait": 5.81,
+    "shuttle": 56.01
+  },
+  "calls": {
+    "shuttle": 1790
+  },
+  "shuttle": {
+    "accel_px_median": 5.0,
+    "accel_px_p90": 41.18,
+    "pct_steps_jump_gt_30px": 15.4,
+    "pct_frames_detected": 98.5,
+    "n_runs": 6,
+    "mean_run_len": 295.5,
+    "n_runs_ge_10": 5,
+    "umpire_calls": 0
+  }
+}

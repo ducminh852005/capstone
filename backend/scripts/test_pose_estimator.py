@@ -1,10 +1,9 @@
 import os
 import sys
 import cv2
-import numpy as np
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from core.pose_estimator import PoseEstimator
+from core.pose_estimator import PoseEstimator, select_foot_point
 
 def test_mediapipe_pose(image_path):
     print(f"Loading image from {image_path}...")
@@ -31,16 +30,19 @@ def test_mediapipe_pose(image_path):
     x, y, w, h = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
     print(f"Selected Bounding Box: x={x}, y={y}, w={w}, h={h}")
 
-    # Crop the image based on the bounding box
-    person_crop = image[y:y+h, x:x+w].copy()
+    bbox_xyxy = (x, y, x + w, y + h)
 
-    # Estimate pose and extract foot point
+    # Estimate pose on a padded crop and extract the foot point
     print("Extracting foot coordinates...")
-    foot_point = estimator.extract_foot_point(person_crop, bbox_offset=(x, y))
+    landmarks = estimator.detect_landmarks(image, bbox_xyxy)
+    foot_point, source = (None, None)
+    if landmarks is not None:
+        foot_point, source = select_foot_point(landmarks, h)
+        if foot_point is not None:
+            foot_point = (int(round(foot_point[0])), int(round(foot_point[1])))
 
-    # Draw the full skeleton on the original image (it modifies the image in-place)
-    result_image = image.copy()
-    result_image = estimator.draw_landmarks(result_image, person_crop, bbox_offset=(x, y))
+    # Draw the full skeleton on a copy of the original image
+    result_image = estimator.draw_landmarks(image.copy(), landmarks)
 
     # Draw YOLO Bounding Box (Blue)
     cv2.rectangle(result_image, (x, y), (x+w, y+h), (255, 0, 0), 2)
@@ -48,7 +50,7 @@ def test_mediapipe_pose(image_path):
 
     # Draw the final calculated foot point (Red Dot)
     if foot_point:
-        print(f"SUCCESS: Estimated Foot Point at Global Coordinate: {foot_point}")
+        print(f"SUCCESS: Estimated Foot Point at Global Coordinate: {foot_point} (source: {source})")
         cv2.circle(result_image, foot_point, radius=6, color=(0, 0, 255), thickness=-1)
         cv2.putText(result_image, "Foot Point", (foot_point[0] + 10, foot_point[1] - 10), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)

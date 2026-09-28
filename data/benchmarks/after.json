@@ -1,0 +1,63 @@
+{
+  "video": "tran04_cam1.mp4",
+  "api": "new",
+  "frames": 1800,
+  "wall_fps": 4.71,
+  "ms_per_frame": {
+    "decode_wait": 0.04,
+    "yolo": 71.76,
+    "shuttle": 109.7,
+    "pose": 29.61
+  },
+  "calls": {
+    "yolo": 1790,
+    "shuttle": 1790,
+    "pose": 545
+  },
+  "player": {
+    "pct_frames_with_player": 89.3,
+    "pct_frames_multi_player": 0.0,
+    "distinct_player_ids": 3,
+    "pose_calls": 545
+  },
+  "shuttle": {
+    "accel_px_median": 4.47,
+    "accel_px_p90": 12.7,
+    "pct_steps_jump_gt_30px": 0.0,
+    "pct_frames_detected": 42.1,
+    "n_runs": 175,
+    "mean_run_len": 4.33,
+    "n_runs_ge_10": 18,
+    "umpire_calls": 2,
+    "calls": [
+      {
+        "frame_idx": 306,
+        "result": "IN",
+        "image_pt": [
+          356,
+          756
+        ],
+        "world_pt": [
+          -0.016,
+          0.669
+        ],
+        "margin_m": 0.004,
+        "close_call": true
+      },
+      {
+        "frame_idx": 702,
+        "result": "IN",
+        "image_pt": [
+          965,
+          688
+        ],
+        "world_pt": [
+          4.648,
+          1.391
+        ],
+        "margin_m": 0.951,
+        "close_call": false
+      }
+    ]
+  }
+}

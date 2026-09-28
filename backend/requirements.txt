@@ -9,3 +9,6 @@ ultralytics
 python-multipart
 python-dotenv
 alembic
+mediapipe
+scipy
+pytest

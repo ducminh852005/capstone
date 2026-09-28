@@ -80,14 +80,35 @@ To test if the court corner detection and tracking homography work well on your 
    .\venv\Scripts\activate
    python scripts\test_calibration.py "path/to/your/sample.jpg"
    ```
-3. A window will open. Click the 4 corners of the **near half-court** in this order:
+   Or, better, build a clean background (median of 60 frames, players removed) from the video itself:
+   ```cmd
+   python scripts\test_calibration.py --video ..\data\cfr\tran04_cam1.mp4
+   ```
+3. A window will open. Drag the 4 corners of the **near half-court** in this order:
    - Bottom-Left
    - Bottom-Right
    - Net-Left
    - Net-Right
-4. The system will draw the projected court frame over the image for validation.
+4. The system draws the projected near half-court (all inner lines) over the image for validation.
+5. Press **R** to refine the homography on the white court lines (the line-overlap score before/after is shown), then **SPACE** to save. The refined matrix is stored as `"H"` in `data/calibration.json` and is used by every script.
 
-## 6. Running the Application (Coming Soon)
+## 6. Tests and Benchmark
+
+Unit tests (synthetic data, no video needed):
+```cmd
+cd backend
+.\venv\Scripts\activate
+python -m pytest tests -q
+```
+
+Headless benchmark of the player + shuttle pipeline (per-stage ms/frame and quality proxies):
+```cmd
+python scripts\benchmark_pipeline.py ..\data\cfr\tran04_cam1.mp4 --frames 1800 --out ..\data\benchmarks\run.json
+```
+Quality numbers are proxies (ID stability, track continuity, shuttle jumps) until hand labels exist.
+Laptop GPUs throttle: compare runs made back to back, not runs from different sessions.
+
+## 7. Running the Application (Coming Soon)
 
 Once the core processing pipeline is complete, you can start the application:
 
