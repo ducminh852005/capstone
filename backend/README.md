@@ -60,6 +60,27 @@ Full-pipeline effect, measured on `data/cfr/tran04_cam1.mp4`, 1800 frames (`data
 
 Cross-check with `scripts/bench_tracknet_forward.py` (raw forward-pass latency, no video/CV overhead): now defaults to `use_half = False` to match, so it reports the same ~103 ms/window number instead of the old (fast-looking but broken) 364 ms/window FP16 figure -- treat any future FP16 timing on a *different* GPU as a correctness question first, a speed question second.
 
+### F. ONNX Runtime backend for TrackNet (`core/tracknet_onnx.py`) -- correct and isolated-faster, but net negative in the full pipeline
+Same checkpoint, same weights, same FP32 math as `TrackNetCandidateSource` (`core/tracknet.py`) -- only the runtime executing the forward pass differs. Motivation: PyTorch eager mode dispatches each conv/batchnorm/upsample block as its own Python call; ONNX Runtime runs the whole graph as one fused C++ call, which should matter more at batch=1 (this pipeline's case) where per-call Python overhead is a real fraction of total time.
+
+`backend="tracknet-onnx"` on `ShuttleDetector` (`TrackNetONNXCandidateSource`, subclasses `TrackNetCandidateSource` and only overrides the parts that touch PyTorch: model construction/session, `_ensure_background`, `_run_batch`). Export first: `python scripts/export_tracknet_onnx.py` (also self-checks the export against PyTorch output, `<1e-6` max abs diff on a random input -- trust but verify). Needs `onnxruntime-gpu==1.19.2` pinned in `requirements.txt`: the latest (1.30+) requires CUDA 13.x/cuDNN 9 system libs and *silently* falls back to `CPUExecutionProvider` with no error if they're missing -- caught this by explicitly checking `session.get_providers()` after construction, not by trusting a clean run. `nvidia-cudnn-cu12`/`nvidia-cublas-cu12` (pip wheels) supply the CUDA/cuDNN DLLs onnxruntime needs, same idea as torch's own bundled CUDA libs.
+
+**Isolated forward-pass latency (same process, no video/YOLO/pose), 30 iterations:** ONNX Runtime is genuinely faster -- 94.4 ms/batch vs. PyTorch's 107.0 ms/batch (~12%). This confirms the Python-dispatch-overhead theory is directionally correct.
+
+**Full-pipeline result is the opposite**, measured back-to-back (same process load state) on `data/cfr/tran04_cam1.mp4`, 1800 frames (`data/benchmarks/tracknet_onnx.json` vs. `tracknet_fp32_recheck.json`):
+
+| | PyTorch (tracknet) | ONNX Runtime (tracknet-onnx) |
+|---|---|---|
+| wall_fps | **17.57** | 11.52 |
+| yolo ms/frame | 25.55 | 39.74 |
+| shuttle ms/frame | 20.15 | 24.02 |
+| pose ms/frame | 10.65 | 22.11 |
+| pct_frames_detected / n_runs | 3.6% / 64 | 3.6% / 64 (identical -- correctness confirmed) |
+
+Every stage got slower with the ONNX backend active -- including YOLO and MediaPipe pose, whose code didn't change at all between these two runs. Since the *isolated* ONNX forward pass is faster, this can't be the ONNX model itself; the working explanation is that **PyTorch and ONNX Runtime each keep their own separate CUDA context/memory allocator** in the same process. `ShuttleDetector(backend="tracknet-onnx")` still runs YOLO through PyTorch (`core/player_tracker.py` is untouched) and TrackNet through ONNX Runtime -- every frame now switches between two independent CUDA contexts on a 4GB card that's already tight, and that switching cost outweighs ONNX's ~12% per-call advantage and then some, dragging down unrelated stages too. Not confirmed with a CUDA profiler, only inferred from this pattern (isolated win, full-pipeline loss spread across unrelated stages, correctness untouched) -- flagged as a hypothesis, not a proven mechanism.
+
+**Conclusion: keep `backend="tracknet"` (PyTorch) as the default; `tracknet-onnx` is correct and available but not adopted.** It would plausibly need YOLO ported to ONNX Runtime too (removing the cross-framework context switching entirely) to realize the underlying per-call speedup -- untested, a bigger change than this session's scope. `data/benchmarks/tracknet_onnx.json` and `tracknet_fp32_recheck.json` are kept as the paired evidence.
+
 ---
 
 ## 3. Workflow & Usage Instructions

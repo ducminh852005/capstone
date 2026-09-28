@@ -13,6 +13,16 @@ mediapipe
 scipy
 pytest
 gdown
+onnx
+
+# onnxruntime-gpu pinned: the latest (1.30+) requires CUDA 13.x/cuDNN 9 system libs and
+# silently falls back to CPUExecutionProvider if they're missing (no error, just slow) --
+# 1.19.2 matches this project's CUDA 12.1 torch build. nvidia-cudnn-cu12/nvidia-cublas-cu12
+# are pip wheels that give onnxruntime the CUDA/cuDNN DLLs it needs without a system-wide
+# CUDA toolkit install (same idea as torch's own bundled CUDA libs).
+onnxruntime-gpu==1.19.2
+nvidia-cudnn-cu12
+nvidia-cublas-cu12
 
 # torch/torchvision are NOT listed here on purpose: the plain PyPI wheel is CPU-only
 # and `pip install -r requirements.txt` would silently replace a working CUDA build.

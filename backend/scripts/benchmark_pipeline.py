@@ -125,7 +125,7 @@ def main():
     ap.add_argument("--out", default=None)
     ap.add_argument("--pose-variant", default=None, help="new API only: lite|heavy")
     ap.add_argument("--bg-method", default=None, help="cv shuttle backend only: knn|mog2")
-    ap.add_argument("--shuttle-backend", default="tracknet", choices=["cv", "tracknet"],
+    ap.add_argument("--shuttle-backend", default="tracknet", choices=["cv", "tracknet", "tracknet-onnx"],
                      help="new API only: candidate generator for ShuttleDetector (default: tracknet)")
     ap.add_argument("--tracknet-stride", type=int, default=None,
                      help="tracknet backend only: frames between forward passes (default: seq_len, nonoverlap)")

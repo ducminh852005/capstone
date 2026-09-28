@@ -116,3 +116,26 @@ def test_tracknet_batch_stride_shorter_than_seq_len_runs_more_often():
 
     assert src_fast.batch_stride == 2 and src_slow.batch_stride == src_slow.seq_len
     assert resolved_fast > resolved_slow
+
+
+DEFAULT_ONNX_PATH = os.path.splitext(DEFAULT_WEIGHTS_PATH)[0] + ".onnx"
+
+
+@pytest.mark.skipif(not os.path.exists(DEFAULT_ONNX_PATH), reason="TrackNet_best.onnx not exported")
+def test_tracknet_onnx_candidate_source_real_checkpoint_forward_pass():
+    from core.tracknet_onnx import TrackNetONNXCandidateSource
+
+    src = TrackNetONNXCandidateSource()
+    assert src.seq_len > 0
+    frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+    roi = (100, 50, 100 + 800, 50 + 450)
+
+    last_mask = None
+    for _ in range(src.bg_frames_needed + src.seq_len + 1):
+        cands, confs, mask = src.generate(frame, roi)
+        assert cands.shape[1] == 2 if len(cands) else True
+        assert len(cands) == len(confs)
+        assert mask.shape == (roi[3] - roi[1], roi[2] - roi[0])
+        last_mask = mask
+    assert src.ready()
+    assert last_mask is not None

@@ -220,10 +220,12 @@ class ShuttleDetector:
                  init_max_residual_px=12.0, init_speed_px=(5.0, 150.0), init_min_confidence=0.6, simple_init=None):
         """
         Shuttle tracker: pluggable candidate generation (backend="cv" classical background
-        subtraction, backend="tracknet" TrackNetV3 heatmap regression) feeding a shared
-        constant-acceleration Kalman tracker with Mahalanobis gating. See core/tracknet.py
-        for why TrackNetV3 uses a different (simpler, confidence-based) track-initiation
-        rule than the CV backend's 3-consecutive-frame consistency check.
+        subtraction, backend="tracknet" TrackNetV3 heatmap regression via PyTorch,
+        backend="tracknet-onnx" the same checkpoint via ONNX Runtime -- see
+        core/tracknet_onnx.py) feeding a shared constant-acceleration Kalman tracker with
+        Mahalanobis gating. See core/tracknet.py for why TrackNetV3 uses a different
+        (simpler, confidence-based) track-initiation rule than the CV backend's
+        3-consecutive-frame consistency check.
 
         A track survives up to max_coast frames without a matching candidate, then ends.
         A single flight never lasts more than a few seconds, so tracks longer than
@@ -234,6 +236,10 @@ class ShuttleDetector:
         backend="tracknet" params: tracknet_path (default backend/TrackNet_best.pt),
             tracknet_kwargs (dict, forwarded to TrackNetCandidateSource: batch_stride,
             conf_threshold, bg_frames, device), init_min_confidence (single-point init).
+        backend="tracknet-onnx" params: tracknet_path (same checkpoint, read for its
+            param_dict only), tracknet_kwargs (forwarded to TrackNetONNXCandidateSource:
+            onnx_path, batch_stride, conf_threshold, bg_frames -- run
+            scripts/export_tracknet_onnx.py first), init_min_confidence.
         """
         if backend == "cv":
             self._source = CVCandidateSource(bg_method=bg_method, min_area=min_area, max_area=max_area,
@@ -246,8 +252,13 @@ class ShuttleDetector:
             # nonoverlap batching only reports a real detection every batch_stride frames;
             # give coast enough headroom to ride out that structural gap plus a few misses.
             self.max_coast = max(12, self._source.batch_stride + 4) if max_coast is None else max_coast
+        elif backend == "tracknet-onnx":
+            from .tracknet_onnx import TrackNetONNXCandidateSource
+            self._source = TrackNetONNXCandidateSource(tracknet_path, **(tracknet_kwargs or {}))
+            self.simple_init = True if simple_init is None else simple_init
+            self.max_coast = max(12, self._source.batch_stride + 4) if max_coast is None else max_coast
         else:
-            raise ValueError(f"Unknown backend {backend!r}, expected 'cv' or 'tracknet'")
+            raise ValueError(f"Unknown backend {backend!r}, expected 'cv', 'tracknet' or 'tracknet-onnx'")
         self.backend = backend
 
         self.max_candidates = max_candidates
