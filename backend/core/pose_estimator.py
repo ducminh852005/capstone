@@ -85,7 +85,7 @@ class PoseEstimator:
         self.variant = variant
 
         base_dir = os.path.dirname(os.path.dirname(__file__))
-        model_path = os.path.join(base_dir, MODEL_FILES[variant])
+        model_path = os.path.join(base_dir, "models", MODEL_FILES[variant])
         if not os.path.exists(model_path):
             logger.error(f"MediaPipe Model not found at {model_path}. Please download it.")
             raise FileNotFoundError(f"Model not found: {model_path}")

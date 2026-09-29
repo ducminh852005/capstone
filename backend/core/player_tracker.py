@@ -1,5 +1,6 @@
 import cv2
 import logging
+import os
 from collections import deque
 from dataclasses import dataclass
 
@@ -143,7 +144,7 @@ class PlayerSelector:
 
 
 class PlayerTracker:
-    def __init__(self, model_path="yolov8n.pt", conf_thresh=0.4, fps=60.0, pose_variant="lite",
+    def __init__(self, model_path=None, conf_thresh=0.4, fps=60.0, pose_variant="lite",
                  pose_every=5, yolo_every=1, imgsz=640, device=None, half=None, selector_kwargs=None):
         """
         YOLOv8 + ByteTrack person tracking, MediaPipe foot points and player selection.
@@ -159,6 +160,8 @@ class PlayerTracker:
              detector's exclude/player boxes and the pose/selection logic downstream only need
              an approximate box, not a fresh one every frame.
         """
+        if model_path is None:
+            model_path = os.path.join(os.path.dirname(__file__), "..", "models", "yolov8n.pt")
         logger.info(f"Loading YOLO model from {model_path}...")
         self.model = YOLO(model_path)
         self.conf_thresh = conf_thresh

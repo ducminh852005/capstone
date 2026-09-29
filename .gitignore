@@ -22,7 +22,7 @@ data/labels/*
 !data/labels/.gitkeep
 
 # Model weights too large for GitHub (100 MB limit) - download manually, see QUICK_START.md
-backend/TrackNet_best.pt
+backend/models/
 
 # IDE
 .idea/

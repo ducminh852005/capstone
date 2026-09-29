@@ -42,7 +42,7 @@ from .tracknet_model import TrackNet, WIDTH, HEIGHT, in_dim_for
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "..", "TrackNet_best.pt")
+DEFAULT_WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "..", "models", "TrackNet_best.pt")
 
 
 def heatmap_to_candidates(heat, threshold=0.5):
