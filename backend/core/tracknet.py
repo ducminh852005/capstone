@@ -42,6 +42,8 @@ from .tracknet_model import TrackNet, WIDTH, HEIGHT, in_dim_for
 
 logger = logging.getLogger(__name__)
 
+from . import config
+
 DEFAULT_WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "..", "models", "TrackNet_best.pt")
 
 
@@ -90,7 +92,9 @@ def scale_candidates(cands, roi, network_size=(WIDTH, HEIGHT)):
 
 
 class TrackNetCandidateSource:
-    def __init__(self, weights_path=None, device=None, batch_stride=None, conf_threshold=0.5, bg_frames=60,
+    def __init__(self, weights_path=None, device=None, batch_stride=None,
+                 conf_threshold=config.TRACKNET_CONF_THRESHOLD,
+                 bg_frames=config.TRACKNET_BG_FRAMES,
                  use_half=False):
         """
         weights_path: path to TrackNet_best.pt (see QUICK_START.md for the download step).

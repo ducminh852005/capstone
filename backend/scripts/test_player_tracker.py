@@ -1,18 +1,26 @@
+"""
+Test player tracking with YOLOv8 + ByteTrack + MediaPipe pose and a tactical heatmap.
+
+Usage:
+    python test_player_tracker.py [video_path] [--stride N] [--pose lite|heavy]
+
+Controls:
+    q - Quit
+"""
 import argparse
-import os
 import sys
 import time
 
 import cv2
 import numpy as np
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Shared utilities (also sets up sys.path)
+from _common import FPSCounter
 from core import court_model, trajectory
+from core.config import BOARD_SCALE, DEFAULT_VIDEO
 from core.court_calibration import CourtCalibrator
 from core.player_tracker import PlayerTracker
 from core.video_io import ThreadedVideoReader
-
-BOARD_SCALE = 100  # pixels per meter on the tactical board
 
 
 def board_point(xy):
@@ -34,7 +42,6 @@ def render_heatmap(board, xy, fps):
     grid = trajectory.occupancy_heatmap(xy, fps)
     if grid.max() <= 0:
         return board.copy()
-    # grid rows run from x_min upwards; the board has the net (x_max) at the top
     heat = cv2.resize(np.flipud(grid), (board.shape[1], board.shape[0]), interpolation=cv2.INTER_LINEAR)
     heat_u8 = np.uint8(255 * heat / heat.max())
     colored = cv2.applyColorMap(heat_u8, cv2.COLORMAP_INFERNO)
@@ -52,7 +59,7 @@ def test_tracking(video_path, stride=2, pose_variant="lite"):
 
     H, H_inv = court_model.load_calibration()
     if H is None:
-        print("WARNING: calibration.json not found. Court lines will not be drawn and no court filtering is applied.")
+        print("WARNING: calibration.json not found. Court lines will not be drawn.")
     calibrator = CourtCalibrator()
 
     tracker = PlayerTracker(model_path="models/yolov8n.pt", conf_thresh=0.5, fps=fps, pose_variant=pose_variant)
@@ -62,14 +69,13 @@ def test_tracking(video_path, stride=2, pose_variant="lite"):
     board_view = board.copy()
     history = {}  # player_id -> ([frame_idx], [(x, y)])
 
-    fps_start_time, fps_frame_count, current_fps = time.time(), 0, 0.0
+    fps_counter = FPSCounter()
     last_display = None
 
     for frame_idx, frame in reader:
         if frame_idx % stride and last_display is not None:
             continue
 
-        # inference runs on the clean frame; drawing happens afterwards
         players = tracker.process(frame, frame_idx, H, H_inv)
 
         for pid, p in players.items():
@@ -90,11 +96,7 @@ def test_tracking(video_path, stride=2, pose_variant="lite"):
             for i, s in enumerate(stats):
                 cv2.putText(board_view, s, (10, 60 + 28 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
-        fps_frame_count += 1
-        elapsed = time.time() - fps_start_time
-        if elapsed > 1.0:
-            current_fps = fps_frame_count / elapsed
-            fps_start_time, fps_frame_count = time.time(), 0
+        current_fps = fps_counter.tick()
         cv2.putText(annotated, f"FPS: {current_fps:.1f}", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
 
         display_video = cv2.resize(annotated, (1024, 576))
@@ -111,7 +113,7 @@ def test_tracking(video_path, stride=2, pose_variant="lite"):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("video", nargs="?", default=r"..\data\cfr\tran04_cam1.mp4")
+    ap.add_argument("video", nargs="?", default=DEFAULT_VIDEO)
     ap.add_argument("--stride", type=int, default=2, help="process every N-th frame")
     ap.add_argument("--pose", default="lite", choices=["lite", "heavy"])
     args = ap.parse_args()

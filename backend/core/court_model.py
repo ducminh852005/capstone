@@ -12,30 +12,55 @@ import os
 import cv2
 import numpy as np
 
+DEFAULT_CALIB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "calibration.json")
+
+# Default values (standard badminton court dimensions in meters)
 COURT_LENGTH = 13.40
 COURT_WIDTH = 6.10
 NET_X = 6.70
-
 BASELINE_X = 0.0
 LONG_SERVICE_DOUBLES_X = 0.76
 SHORT_SERVICE_X = 4.72
-
 SIDELINE_DOUBLES_Y = (0.0, 6.10)
 SIDELINE_SINGLES_Y = (0.46, 5.64)
 CENTER_Y = 3.05
-
 LINE_HALF_WIDTH = 0.02
 
+# Dynamically load from calibration.json if available
+if os.path.exists(DEFAULT_CALIB_PATH):
+    try:
+        with open(DEFAULT_CALIB_PATH, "r", encoding="utf-8") as f:
+            _calib_data = json.load(f)
+            if "court_dimensions" in _calib_data:
+                _cd = _calib_data["court_dimensions"]
+                COURT_LENGTH = _cd.get("COURT_LENGTH", COURT_LENGTH)
+                COURT_WIDTH = _cd.get("COURT_WIDTH", COURT_WIDTH)
+                NET_X = _cd.get("NET_X", NET_X)
+                BASELINE_X = _cd.get("BASELINE_X", BASELINE_X)
+                LONG_SERVICE_DOUBLES_X = _cd.get("LONG_SERVICE_DOUBLES_X", LONG_SERVICE_DOUBLES_X)
+                SHORT_SERVICE_X = _cd.get("SHORT_SERVICE_X", SHORT_SERVICE_X)
+                if "SIDELINE_DOUBLES_Y" in _cd:
+                    SIDELINE_DOUBLES_Y = tuple(_cd["SIDELINE_DOUBLES_Y"])
+                if "SIDELINE_SINGLES_Y" in _cd:
+                    SIDELINE_SINGLES_Y = tuple(_cd["SIDELINE_SINGLES_Y"])
+                CENTER_Y = _cd.get("CENTER_Y", CENTER_Y)
+                LINE_HALF_WIDTH = _cd.get("LINE_HALF_WIDTH", LINE_HALF_WIDTH)
+    except Exception as e:
+        print(f"WARNING: Failed to parse court dimensions from {DEFAULT_CALIB_PATH}: {e}")
+
 # Corners clicked in scripts/test_calibration.py: Bottom-Left, Bottom-Right, Net-Left, Net-Right
-CALIB_WORLD_POINTS = [(0.0, 0.0), (0.0, 6.10), (6.70, 0.0), (6.70, 6.10)]
+CALIB_WORLD_POINTS = [
+    (BASELINE_X, SIDELINE_DOUBLES_Y[0]),
+    (BASELINE_X, SIDELINE_DOUBLES_Y[1]),
+    (NET_X, SIDELINE_DOUBLES_Y[0]),
+    (NET_X, SIDELINE_DOUBLES_Y[1])
+]
 
 # (x_min, x_max, y_min, y_max): near half-court plus the buffer from the guideline
 # (~1 m behind the baseline, ~0.5 m on each side). Used for player gating and heatmaps.
-REGION_BUFFERED = (-1.0, NET_X, -0.5, 6.60)
+REGION_BUFFERED = (BASELINE_X - 1.0, NET_X, SIDELINE_DOUBLES_Y[0] - 0.5, SIDELINE_DOUBLES_Y[1] + 0.5)
 # Wider region used only as a cheap pre-filter before running pose estimation.
-REGION_PREFILTER = (-2.0, 7.2, -1.5, 7.6)
-
-DEFAULT_CALIB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "calibration.json")
+REGION_PREFILTER = (BASELINE_X - 2.0, NET_X + 0.5, SIDELINE_DOUBLES_Y[0] - 1.5, SIDELINE_DOUBLES_Y[1] + 1.5)
 
 
 def near_half_lines():
@@ -49,6 +74,39 @@ def near_half_lines():
     ]
     for y in (*SIDELINE_DOUBLES_Y, *SIDELINE_SINGLES_Y):
         lines.append(((BASELINE_X, y), (NET_X, y)))
+    return lines
+
+
+def full_court_lines():
+    """All painted line segments of the full court as ((x1, y1), (x2, y2)) in meters."""
+    y0, y1 = SIDELINE_DOUBLES_Y
+    ys0, ys1 = SIDELINE_SINGLES_Y
+    far_baseline = COURT_LENGTH
+    far_long_service = COURT_LENGTH - LONG_SERVICE_DOUBLES_X
+    far_short_service = COURT_LENGTH - SHORT_SERVICE_X
+
+    lines = [
+        # Baselines
+        ((BASELINE_X, y0), (BASELINE_X, y1)),
+        ((far_baseline, y0), (far_baseline, y1)),
+        # Long service lines (doubles)
+        ((LONG_SERVICE_DOUBLES_X, y0), (LONG_SERVICE_DOUBLES_X, y1)),
+        ((far_long_service, y0), (far_long_service, y1)),
+        # Short service lines
+        ((SHORT_SERVICE_X, y0), (SHORT_SERVICE_X, y1)),
+        ((far_short_service, y0), (far_short_service, y1)),
+        # Net line
+        ((NET_X, y0), (NET_X, y1)),
+        # Doubles sidelines (full length)
+        ((BASELINE_X, y0), (far_baseline, y0)),
+        ((BASELINE_X, y1), (far_baseline, y1)),
+        # Singles sidelines (full length)
+        ((BASELINE_X, ys0), (far_baseline, ys0)),
+        ((BASELINE_X, ys1), (far_baseline, ys1)),
+        # Centre lines (near and far halves, between short service lines)
+        ((BASELINE_X, CENTER_Y), (SHORT_SERVICE_X, CENTER_Y)),
+        ((far_short_service, CENTER_Y), (far_baseline, CENTER_Y)),
+    ]
     return lines
 
 

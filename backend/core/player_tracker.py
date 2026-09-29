@@ -8,6 +8,7 @@ import numpy as np
 from ultralytics import YOLO
 
 from . import court_model
+from . import config
 from .pose_estimator import PoseEstimator
 
 logger = logging.getLogger(__name__)
@@ -37,8 +38,13 @@ class PlayerSelector:
       the player_id. After `reid_window_s` without a match the slot is released.
     """
 
-    def __init__(self, fps=60.0, window_s=10.0, min_track_s=1.0, min_score=0.5, switch_margin=0.3,
-                 reid_window_s=3.0, reid_dist_m=2.0, max_players=1):
+    def __init__(self, fps=60.0, window_s=config.SELECTOR_WINDOW_S,
+                 min_track_s=config.SELECTOR_MIN_TRACK_S,
+                 min_score=config.SELECTOR_MIN_SCORE,
+                 switch_margin=config.SELECTOR_SWITCH_MARGIN,
+                 reid_window_s=config.SELECTOR_REID_WINDOW_S,
+                 reid_dist_m=config.SELECTOR_REID_DIST_M,
+                 max_players=1):
         self.window = max(int(window_s * fps), 1)
         self.min_track = max(int(min_track_s * fps), 1)
         self.min_score = min_score
@@ -144,8 +150,9 @@ class PlayerSelector:
 
 
 class PlayerTracker:
-    def __init__(self, model_path=None, conf_thresh=0.4, fps=60.0, pose_variant="lite",
-                 pose_every=5, yolo_every=1, imgsz=640, device=None, half=None, selector_kwargs=None):
+    def __init__(self, model_path=None, conf_thresh=config.PLAYER_YOLO_CONF, fps=60.0, pose_variant="lite",
+                 pose_every=config.PLAYER_POSE_EVERY, yolo_every=config.PLAYER_YOLO_EVERY,
+                 imgsz=config.PLAYER_YOLO_IMGSZ, device=None, half=None, selector_kwargs=None):
         """
         YOLOv8 + ByteTrack person tracking, MediaPipe foot points and player selection.
 

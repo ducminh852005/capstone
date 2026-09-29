@@ -1,72 +1,64 @@
-import cv2
-import os
+"""
+Test raw shuttle tracking with side-by-side video and mask display.
+
+Usage:
+    python test_shuttle_tracker.py [video_path]
+
+Controls:
+    q - Quit
+"""
 import sys
+import cv2
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from core.shuttle_tracker import ShuttleDetector
+# Shared utilities (also sets up sys.path)
+from _common import create_detector, FPSCounter
+from core.config import DEFAULT_VIDEO
 
-import time
 
 def test_shuttle(video_path):
     print(f"Opening video: {video_path}")
     cap = cv2.VideoCapture(video_path)
-    
+
     if not cap.isOpened():
         print(f"Error: Could not open video {video_path}")
         return
-        
-    detector = ShuttleDetector()
-    
+
+    detector = create_detector(backend="cv")
+    fps_counter = FPSCounter()
+
     print("Starting shuttlecock tracking playback... Press 'q' to stop.")
-    
-    fps_start_time = time.time()
-    fps_frame_count = 0
-    current_fps = 0
-    
+
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-            
-        # Detect shuttlecock
+
         pt, fg_mask = detector.detect(frame)
-        
-        # Draw the tail (trajectory)
         annotated = detector.draw_trajectory(frame)
-        
-        # --- FPS Calculation ---
-        fps_frame_count += 1
-        elapsed = time.time() - fps_start_time
-        if elapsed > 1.0:
-            current_fps = fps_frame_count / elapsed
-            fps_start_time = time.time()
-            fps_frame_count = 0
-            
-        # Convert mask to BGR so we can stack them side-by-side
+
+        current_fps = fps_counter.tick()
+
+        # Convert mask to BGR for side-by-side display
         mask_bgr = cv2.cvtColor(fg_mask, cv2.COLOR_GRAY2BGR)
-        
-        # Add labels and FPS
-        cv2.putText(mask_bgr, "Background Subtractor Mask", (20, 40), 
+
+        mask_label = "Background Subtractor Mask" if detector.backend == "cv" else "TrackNet Heatmap"
+        cv2.putText(mask_bgr, mask_label, (20, 40),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        cv2.putText(annotated, f"FPS: {current_fps:.1f}", (20, 40), 
+        cv2.putText(annotated, f"FPS: {current_fps:.1f}", (20, 40),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-        
-        # Resize for display
-        annotated_resized = cv2.resize(annotated, (720, 405)) # 16:9 ratio
+
+        annotated_resized = cv2.resize(annotated, (720, 405))
         mask_resized = cv2.resize(mask_bgr, (720, 405))
-        
-        # Stack horizontally
         combined = cv2.hconcat([annotated_resized, mask_resized])
-        
+
         cv2.imshow("Left: Final Tracking | Right: CV2 Motion Mask", combined)
-        
-        # Wait key for speed control. 1 = max speed. 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-            
+
     cap.release()
     cv2.destroyAllWindows()
 
+
 if __name__ == "__main__":
-    target_video = os.path.join(os.path.dirname(__file__), "..", "..", "data", "cfr", "tran04_cam1.mp4")
+    target_video = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_VIDEO
     test_shuttle(target_video)

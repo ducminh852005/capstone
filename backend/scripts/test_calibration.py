@@ -102,11 +102,23 @@ def interactive_calibration(image_path=None, video_path=None):
             status = f"Line overlap: {100 * before:.1f}% -> {100 * after:.1f}%"
             print(status)
         elif key in (32, 13):  # Space or Enter
-            data = {"image_points": image_points}
+            # Read existing data first to preserve court_dimensions
+            data = {}
+            if os.path.exists(config_path):
+                try:
+                    with open(config_path, "r") as f:
+                        data = json.load(f)
+                except Exception:
+                    pass
+                    
+            data["image_points"] = image_points
             if refined_H is not None:
                 data["H"] = refined_H.tolist()
-            with open(config_path, "w") as f:
-                json.dump(data, f)
+            elif "H" in data:
+                del data["H"]
+                
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
             print(f"Calibration saved to {config_path}{' (with refined H)' if refined_H is not None else ''}!")
             break
         elif key in (ord('q'), 27):  # Q or Esc

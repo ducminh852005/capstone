@@ -7,6 +7,7 @@ import numpy as np
 from scipy.signal import savgol_filter
 
 from . import court_model
+from . import config
 
 
 def _to_dense(frame_idx, xy):
@@ -25,7 +26,8 @@ def _segments(valid):
     return list(zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)))
 
 
-def reject_outliers(xy, fps, region=court_model.REGION_BUFFERED, max_speed=7.0, reset_after_s=0.25):
+def reject_outliers(xy, fps, region=court_model.REGION_BUFFERED,
+                    max_speed=config.TRAJECTORY_MAX_SPEED, reset_after_s=0.25):
     """
     NaN out points outside `region` and points implying a speed above `max_speed` m/s
     relative to the last accepted point. If rejections persist for `reset_after_s`, the
@@ -49,7 +51,7 @@ def reject_outliers(xy, fps, region=court_model.REGION_BUFFERED, max_speed=7.0, 
     return out
 
 
-def interpolate_short_gaps(xy, fps, max_gap_s=0.5):
+def interpolate_short_gaps(xy, fps, max_gap_s=config.TRAJECTORY_MAX_GAP_S):
     """Linear interpolation over interior gaps shorter than max_gap_s; longer gaps stay NaN."""
     out = xy.copy()
     valid = ~np.isnan(out[:, 0])
@@ -63,7 +65,8 @@ def interpolate_short_gaps(xy, fps, max_gap_s=0.5):
     return out
 
 
-def smooth(xy, fps, window_s=0.4, polyorder=2):
+def smooth(xy, fps, window_s=config.TRAJECTORY_SMOOTH_WINDOW_S,
+           polyorder=config.TRAJECTORY_SMOOTH_POLYORDER):
     """Savitzky-Golay per continuous segment (segments shorter than the window are left as is)."""
     out = xy.copy()
     window = int(round(window_s * fps)) | 1  # odd
@@ -75,7 +78,10 @@ def smooth(xy, fps, window_s=0.4, polyorder=2):
     return out
 
 
-def clean_player_track(frame_idx, xy, fps, max_speed=7.0, max_gap_s=0.5, smooth_window_s=0.4):
+def clean_player_track(frame_idx, xy, fps,
+                       max_speed=config.TRAJECTORY_MAX_SPEED,
+                       max_gap_s=config.TRAJECTORY_MAX_GAP_S,
+                       smooth_window_s=config.TRAJECTORY_SMOOTH_WINDOW_S):
     """
     Guideline order: reject out-of-region / too-fast points -> interpolate gaps < 0.5 s ->
     Savitzky-Golay smoothing. Returns (first_frame, dense_xy) with NaN for missing frames.

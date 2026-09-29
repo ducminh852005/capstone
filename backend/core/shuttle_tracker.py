@@ -4,14 +4,17 @@ import numpy as np
 import logging
 
 from .tracknet import TrackNetCandidateSource
+from . import config
 
 logger = logging.getLogger(__name__)
 
-CHI2_2DOF_99 = 9.21
+CHI2_2DOF_99 = config.KALMAN_CHI2_GATE
 
 
 class ShuttleTrajectoryProcessor:
-    def __init__(self, max_gap_frames=15, fit_window=8, max_fit_rms_px=4.0):
+    def __init__(self, max_gap_frames=config.SHUTTLE_MAX_GAP_FRAMES,
+                 fit_window=config.SHUTTLE_FIT_WINDOW,
+                 max_fit_rms_px=config.SHUTTLE_MAX_FIT_RMS_PX):
         """
         max_gap_frames: longest run of missing frames that is interpolated (15 = 0.25 s at 60 fps).
                         Longer gaps are left empty rather than inventing a trajectory.
@@ -178,7 +181,9 @@ class CVCandidateSource:
     that TrackNetCandidateSource (core/tracknet.py) also implements.
     """
 
-    def __init__(self, bg_method="knn", min_area=2, max_area=500, max_merged_area=900, max_elongation=6.0):
+    def __init__(self, bg_method=config.CV_BG_METHOD, min_area=config.CV_MIN_BLOB_AREA,
+                 max_area=config.CV_MAX_BLOB_AREA, max_merged_area=config.CV_MAX_MERGED_AREA,
+                 max_elongation=config.CV_MAX_ELONGATION):
         self.processor = ShuttleTrajectoryProcessor()
         if bg_method == "knn":
             self.bg_subtractor = cv2.createBackgroundSubtractorKNN(history=50, dist2Threshold=400, detectShadows=False)
@@ -232,10 +237,17 @@ class CVCandidateSource:
 
 
 class ShuttleDetector:
-    def __init__(self, backend="tracknet", tracknet_path=None, tracknet_kwargs=None,
-                 bg_method="knn", min_area=2, max_area=500, max_merged_area=900, max_elongation=6.0,
-                 max_candidates=150, max_coast=None, max_track_len=180, min_gate_px=15.0, min_body_speed=8.0,
-                 init_max_residual_px=12.0, init_speed_px=(5.0, 150.0), init_min_confidence=0.6, simple_init=None):
+    def __init__(self, backend=config.DEFAULT_BACKEND, tracknet_path=None, tracknet_kwargs=None,
+                 bg_method=config.CV_BG_METHOD, min_area=config.CV_MIN_BLOB_AREA,
+                 max_area=config.CV_MAX_BLOB_AREA, max_merged_area=config.CV_MAX_MERGED_AREA,
+                 max_elongation=config.CV_MAX_ELONGATION,
+                 max_candidates=config.MAX_CANDIDATES, max_coast=None,
+                 max_track_len=config.MAX_TRACK_LEN, min_gate_px=config.KALMAN_MIN_GATE_PX,
+                 min_body_speed=config.MIN_BODY_SPEED_PX,
+                 init_max_residual_px=config.CV_INIT_MAX_RESIDUAL_PX,
+                 init_speed_px=config.CV_INIT_SPEED_RANGE,
+                 init_min_confidence=config.TRACKNET_INIT_MIN_CONFIDENCE,
+                 simple_init=None):
         """
         Shuttle tracker: pluggable candidate generation (backend="cv" classical background
         subtraction, backend="tracknet" TrackNetV3 heatmap regression via PyTorch,

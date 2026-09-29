@@ -19,6 +19,7 @@ from dataclasses import dataclass, asdict
 import numpy as np
 
 from . import court_model
+from . import config
 
 SINGLES = "singles"
 DOUBLES = "doubles"
@@ -75,9 +76,15 @@ def match_type_from_metadata(video_name, metadata_path=None):
 
 class RallyUmpire:
     def __init__(self, H_inv, match_type=SINGLES, frame_size=None, roi=None, net_top_y=None,
-                 edge_margin_px=25, rest_speed_px=2.0, rest_frames=2, close_call_m=0.10, min_flight_len=5,
-                 min_descent_px=80, bounce_decel_ratio=0.4, settle_search_frames=30,
-                 floor_region=(-3.0, court_model.COURT_LENGTH + 3.0, -3.0, court_model.COURT_WIDTH + 3.0)):
+                 edge_margin_px=config.UMPIRE_EDGE_MARGIN_PX,
+                 rest_speed_px=config.UMPIRE_REST_SPEED_PX,
+                 rest_frames=config.UMPIRE_REST_FRAMES,
+                 close_call_m=config.UMPIRE_CLOSE_CALL_M,
+                 min_flight_len=config.UMPIRE_MIN_FLIGHT_LEN,
+                 min_descent_px=config.UMPIRE_MIN_DESCENT_PX,
+                 bounce_decel_ratio=config.UMPIRE_BOUNCE_DECEL_RATIO,
+                 settle_search_frames=config.UMPIRE_SETTLE_SEARCH_FRAMES,
+                 floor_region=config.UMPIRE_FLOOR_REGION):
         """
         frame_size: (h, w) of the frame; with roi, defines the edges a shuttle can exit through.
         net_top_y: image row the flight must rise above (anti-pickup filter); None disables it.
