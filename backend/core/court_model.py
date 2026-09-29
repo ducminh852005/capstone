@@ -135,12 +135,12 @@ def player_roi(H, frame_shape, region=REGION_BUFFERED, person_height_m=2.2, marg
 
 def shuttle_roi(H, frame_shape, margin_frac=0.03, top_frac=0.10):
     """
-    ROI for shuttle detection: horizontal span of the near half-court lines (plus a
-    margin), from `top_frac` of the frame height down to the bottom. The top band is
-    dropped to ignore ceiling lights, the sides to ignore spectators.
+    ROI for shuttle detection: horizontal span of the full-court lines (both halves,
+    plus a margin), from `top_frac` of the frame height down to the bottom. The top
+    band is dropped to ignore ceiling lights, the sides to ignore spectators.
     """
     h, w = frame_shape[:2]
-    poly = region_polygon_img(H, (0.0, NET_X, 0.0, COURT_WIDTH)).reshape(-1, 2)
+    poly = region_polygon_img(H, (0.0, COURT_LENGTH, 0.0, COURT_WIDTH)).reshape(-1, 2)
     x0 = poly[:, 0].min() - margin_frac * w
     x1 = poly[:, 0].max() + margin_frac * w
     return _clamp_roi(x0, top_frac * h, x1, h, frame_shape)

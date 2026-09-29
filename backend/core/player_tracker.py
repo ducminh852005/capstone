@@ -144,7 +144,7 @@ class PlayerSelector:
 
 class PlayerTracker:
     def __init__(self, model_path="yolov8n.pt", conf_thresh=0.4, fps=60.0, pose_variant="lite",
-                 pose_every=5, imgsz=640, device=None, half=None, selector_kwargs=None):
+                 pose_every=5, yolo_every=1, imgsz=640, device=None, half=None, selector_kwargs=None):
         """
         YOLOv8 + ByteTrack person tracking, MediaPipe foot points and player selection.
 
@@ -153,6 +153,11 @@ class PlayerTracker:
         pose_every: MediaPipe runs on the selected player's track every N frames and on other
              tracks near the court every 3N frames (staggered by track id); in between, the
              cached foot offset relative to the bbox is used.
+        yolo_every: run YOLO+ByteTrack every N calls to process(); on skipped calls the boxes/ids
+             from the last real detection are reused as-is (frozen, not re-predicted) -- cheap
+             because a player's position barely moves across 1-2 frames, and the shuttle
+             detector's exclude/player boxes and the pose/selection logic downstream only need
+             an approximate box, not a fresh one every frame.
         """
         logger.info(f"Loading YOLO model from {model_path}...")
         self.model = YOLO(model_path)
@@ -170,14 +175,17 @@ class PlayerTracker:
 
         self.pose_estimator = PoseEstimator(variant=pose_variant)
         self.pose_every = max(int(pose_every), 1)
+        self.yolo_every = max(int(yolo_every), 1)
         self.selector = PlayerSelector(fps=fps, **(selector_kwargs or {}))
 
         # {track_id: (dx / bbox_h, dy / bbox_h)} foot offset from the bbox bottom-centre
         self.foot_offsets = {}
         self._pose_tried = set()  # tracks that already had a first pose attempt
         self._n_updates = 0  # pose schedule counter (frame_idx may skip frames)
+        self._detect_calls = 0  # yolo schedule counter, counts process() calls
         self._roi_cache = (None, None, None)  # (H id, frame shape, roi)
         self.last_boxes = np.empty((0, 4), np.float32)  # every person box of the last frame
+        self.last_ids = np.empty((0,), np.int64)         # matching track ids of last_boxes
 
     def track_frame(self, frame, persist=True):
         """Raw YOLO + ByteTrack result for one frame (class 0 = person)."""
@@ -281,10 +289,15 @@ class PlayerTracker:
         return players
 
     def process(self, frame, frame_idx, H=None, H_inv=None):
-        """Full per-frame step: ROI from calibration -> YOLO/ByteTrack -> foot points -> selection."""
-        boxes, ids = self.detect(frame, self.roi_for(H, frame.shape))
-        self.last_boxes = boxes
-        return self.update(frame, frame_idx, boxes, ids, H_inv)
+        """
+        Full per-frame step: ROI from calibration -> YOLO/ByteTrack -> foot points -> selection.
+        YOLO/ByteTrack itself only runs every `yolo_every` calls (see __init__); other calls
+        reuse the last boxes/ids untouched.
+        """
+        if self._detect_calls % self.yolo_every == 0:
+            self.last_boxes, self.last_ids = self.detect(frame, self.roi_for(H, frame.shape))
+        self._detect_calls += 1
+        return self.update(frame, frame_idx, self.last_boxes, self.last_ids, H_inv)
 
     def draw_tracking(self, frame, players):
         """Bounding box, player/track id and foot point for each selected player."""

@@ -45,12 +45,17 @@ class ShuttleTrajectoryProcessor:
 
     def fill_missing_trajectory(self, trajectory):
         """
-        Fills short gaps (None entries) in a list of (x, y) per frame.
+        Fills short gaps (None entries) in a list of (x, y) per frame -- e.g. the shuttle
+        passing behind a player, umpire chair or net post.
 
-        Each gap is filled with a degree-2 polynomial in time fitted to up to `fit_window`
-        valid points on each side. If the horizontal direction flips across the gap or the fit
-        residual is large (a racket hit happened inside the gap), linear interpolation between
-        the two gap endpoints is used instead. Leading/trailing gaps are never extrapolated.
+        Each gap is filled with a degree-2 polynomial in time (constant-acceleration flight
+        under gravity) fitted to up to `fit_window` valid points on each side, i.e. the
+        occlusion is bridged by inertia. If the velocity vector on either side of the gap
+        looks like it changed at a hit -- the direction sharply turns or the speed jumps far
+        more than gravity alone explains -- or the fit residual is large, that inertia
+        assumption is wrong (a racket hit happened inside the gap) and linear interpolation
+        between the two gap endpoints is used instead. Leading/trailing gaps are never
+        extrapolated.
         """
         filled = list(trajectory)
         valid_indices = [i for i, pt in enumerate(trajectory) if pt is not None]
@@ -72,7 +77,7 @@ class ShuttleTrajectoryProcessor:
             gap_t = np.arange(gap_start, gap_end + 1)
 
             values = None
-            if len(before) >= 2 and len(after) >= 2 and not self._direction_flips(trajectory, before, after):
+            if len(before) >= 2 and len(after) >= 2 and not self._likely_hit(trajectory, before, after):
                 t = np.array(before + after, dtype=np.float64)
                 pts = np.array([trajectory[i] for i in before + after], dtype=np.float64)
                 coef_x = np.polyfit(t, pts[:, 0], deg=2)
@@ -91,10 +96,23 @@ class ShuttleTrajectoryProcessor:
         return filled
 
     @staticmethod
-    def _direction_flips(trajectory, before, after):
-        vx_before = (trajectory[before[-1]][0] - trajectory[before[0]][0]) / max(before[-1] - before[0], 1)
-        vx_after = (trajectory[after[-1]][0] - trajectory[after[0]][0]) / max(after[-1] - after[0], 1)
-        return vx_before * vx_after < 0 and min(abs(vx_before), abs(vx_after)) > 1.0
+    def _likely_hit(trajectory, before, after, angle_cos_thresh=0.3, speed_ratio_thresh=2.5):
+        """
+        True if the velocity across the gap looks like it changed at a hit rather than
+        coasting on inertia: the direction sharply turns (checked on both axes, not just
+        horizontal -- a straight net kill reverses vertical direction without ever flipping
+        horizontal), or the speed jumps far more than gravity alone would explain over one
+        gap (e.g. a soft shot smashed away on the other side of the occlusion).
+        """
+        v_before = (np.subtract(trajectory[before[-1]], trajectory[before[0]])) / max(before[-1] - before[0], 1)
+        v_after = (np.subtract(trajectory[after[-1]], trajectory[after[0]])) / max(after[-1] - after[0], 1)
+        speed_before, speed_after = np.linalg.norm(v_before), np.linalg.norm(v_after)
+        if speed_before < 1.0 or speed_after < 1.0:
+            return False  # too slow to read direction/speed; let the parabola fit RMS decide
+        cos_angle = np.dot(v_before, v_after) / (speed_before * speed_after)
+        direction_turned = cos_angle < angle_cos_thresh
+        speed_jumped = max(speed_before, speed_after) / min(speed_before, speed_after) > speed_ratio_thresh
+        return bool(direction_turned or speed_jumped)
 
 
 class ConstantAccelerationKalman:

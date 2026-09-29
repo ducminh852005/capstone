@@ -119,6 +119,22 @@ def test_fill_missing_gap_with_hit_falls_back_to_linear():
         assert np.hypot(*(np.array(filled[t]) - expected)) <= 1.0
 
 
+def test_fill_missing_gap_with_vertical_reversal_falls_back_to_linear():
+    proc = ShuttleTrajectoryProcessor()
+    # x keeps drifting the same way on both sides (no horizontal flip), but the shuttle
+    # was going up before the gap and comes out diving steeply after it -- a straight
+    # net kill hit inside the occlusion, not inertia carrying it through.
+    traj = [(100 + 20 * t, 700 - 30 * t) for t in range(10)]
+    y13 = traj[9][1] - 30
+    traj += [None] * 3
+    traj += [(100 + 20 * t, y13 + 40 * (t - 13)) for t in range(13, 23)]
+    filled = proc.fill_missing_trajectory(traj)
+    a, b = np.array(traj[9], float), np.array(traj[13], float)
+    for k, t in enumerate(range(10, 13), start=1):
+        expected = a + (b - a) * k / 4
+        assert np.hypot(*(np.array(filled[t]) - expected)) <= 1.0
+
+
 def test_fill_missing_leaves_long_gaps():
     proc = ShuttleTrajectoryProcessor(max_gap_frames=15)
     traj = [truth(t) for t in range(5)] + [None] * 20 + [truth(t) for t in range(25, 30)]

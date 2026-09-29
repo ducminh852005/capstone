@@ -35,7 +35,7 @@ def test_auto_umpire(video_path, shuttle_backend="tracknet"):
         detector = ShuttleDetector(backend="cv")
     print(f"Shuttle backend: {detector.backend}")
     # people detection is only used to mask bodies/spectators out of the shuttle candidates
-    tracker = PlayerTracker(model_path="yolov8n.pt", conf_thresh=0.5, fps=reader.fps)
+    tracker = PlayerTracker(model_path="yolov8n.pt", conf_thresh=0.5, fps=reader.fps, yolo_every=3)
     umpire = RallyUmpire(H_inv, match_type=match_type, frame_size=(h, w), roi=roi,
                          net_top_y=court_model.net_top_threshold_y(H))
 
@@ -68,14 +68,17 @@ def test_auto_umpire(video_path, shuttle_backend="tracknet"):
         call = umpire.update(frame_idx, pt, detector.track_active, people_boxes=list(tracker.last_boxes))
         if call is not None:
             last_landing_pt = call.image_pt
-            # a landing in the near half was hit by the far player
-            if call.result == "IN":
+            # a landing in a half was hit by the player on the OTHER half; IN means that
+            # hitter scores, OUT means the receiving side scores instead
+            hitter = "far" if call.half == "near" else "near"
+            winner = hitter if call.result == "IN" else ("near" if hitter == "far" else "far")
+            if winner == "far":
                 score_far += 1
                 alert_color = (0, 255, 0)
             else:
                 score_near += 1
                 alert_color = (0, 0, 255)
-            alert_text = f"{call.result}{' (close)' if call.close_call else ''} {call.margin_m:+.2f} m"
+            alert_text = f"{call.half.upper()} {call.result}{' (close)' if call.close_call else ''} {call.margin_m:+.2f} m"
             print(f"frame {frame_idx}: {call.to_dict()}")
             show_alert_until = 60
 

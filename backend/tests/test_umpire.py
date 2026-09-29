@@ -22,15 +22,71 @@ def test_line_is_in_and_close_call():
     assert result == "IN" and not close and margin > 1.0
 
 
+def _parabola_to_touchdown(land):
+    """Single continuous parabola (rises above the net, falls under constant acceleration)
+    down to the first frame at or past the landing height -- no synthetic slope change
+    before it, so the only discontinuity in the flight is the impact itself."""
+    pts, t = [], 0
+    while True:
+        y = land[1] - 400 + 0.9 * t * t - 13 * t
+        x = land[0] - 150 + 5 * t
+        if y >= land[1] and t > 7:
+            break
+        pts.append((x, y))
+        t += 1
+    return pts
+
+
 def flight_to(world_landing, rest_frames=4):
-    """Image-space flight: rises above the net threshold, falls onto the landing point, then rests."""
+    """Image-space flight: rises above the net threshold, falls onto the landing point in one
+    continuous parabola, then a sudden full stop (the impact) for rest_frames frames."""
     land = court_model.world_to_img([world_landing], H)[0]
-    pts = [(land[0] - 150 + 5 * t, land[1] - 400 + 0.9 * t * t - 13 * t) for t in range(30)]
-    fall_end = pts[-1]
-    for k in range(1, 6):
-        pts.append((fall_end[0] + (land[0] - fall_end[0]) * k / 5, fall_end[1] + (land[1] - fall_end[1]) * k / 5))
-    pts += [tuple(land)] * rest_frames
+    pts = _parabola_to_touchdown(land) + [tuple(land)] * rest_frames
     return [(int(round(x)), int(round(y))) for x, y in pts]
+
+
+def flight_bounce_to(world_landing, bounce_height=20.0, bounce_dx=40.0, n_bounce=15, rest_frames=4):
+    """
+    Touchdown (a real impact loses most of its energy, so the bounce arc starts much
+    slower than the incoming fall), then a small secondary bounce that resettles a clear
+    distance away. Returns (points, touchdown_px, final_rest_px); touchdown_px is the
+    first sample after contact -- the earliest a discrete, ~60fps camera could ever place
+    it, same convention as landing_point's own first-post-impact-sample report.
+    """
+    land = court_model.world_to_img([world_landing], H)[0]
+    pts = _parabola_to_touchdown(land)
+    contact = pts[-1]
+    touchdown = None
+    for k in range(1, n_bounce + 1):
+        f = k / n_bounce
+        p = (contact[0] + bounce_dx * f, contact[1] - bounce_height * 4 * f * (1 - f))
+        pts.append(p)
+        touchdown = touchdown or p
+    rest_pt = pts[-1]
+    pts += [rest_pt] * rest_frames
+    return [(int(round(x)), int(round(y))) for x, y in pts], touchdown, rest_pt
+
+
+def flight_slide_to(world_landing, slide_dx=40.0, n_slide=25, rest_frames=4):
+    """
+    Touchdown, then a decelerating horizontal skid (constant height, starting slow like a
+    real friction-braked skid) to a stop some distance away. Returns (points, touchdown_px,
+    final_rest_px); touchdown_px is the first sample after contact (see flight_bounce_to).
+    """
+    land = court_model.world_to_img([world_landing], H)[0]
+    pts = _parabola_to_touchdown(land)
+    contact = pts[-1]
+    cur = contact
+    touchdown = None
+    for k in range(n_slide):
+        remaining = n_slide - k
+        dx = slide_dx * (2 * remaining - 1) / (n_slide * n_slide)  # decreasing steps, sums to slide_dx
+        cur = (cur[0] + dx, contact[1])
+        pts.append(cur)
+        touchdown = touchdown or cur
+    rest_pt = pts[-1]
+    pts += [rest_pt] * rest_frames
+    return [(int(round(x)), int(round(y))) for x, y in pts], touchdown, rest_pt
 
 
 def feed(umpire, pts):
@@ -79,6 +135,24 @@ def test_no_call_when_resting_on_a_person():
     calls = [ump.update(i, p, True, people_boxes=[box]) for i, p in enumerate(pts)]
     calls.append(ump.update(len(pts), None, False, people_boxes=[box]))
     assert [c for c in calls if c is not None] == []
+
+
+def test_bounce_is_called_at_first_touchdown_not_final_rest():
+    pts, touchdown, rest_pt = flight_bounce_to((3.0, 3.0))
+    calls = feed(make_umpire(), pts)
+    assert len(calls) == 1 and calls[0].result == "IN"
+    call_px = calls[0].image_pt
+    assert np.hypot(call_px[0] - touchdown[0], call_px[1] - touchdown[1]) < 10.0
+    assert np.hypot(call_px[0] - rest_pt[0], call_px[1] - rest_pt[1]) > 20.0
+
+
+def test_slide_is_called_at_first_touchdown_not_final_rest():
+    pts, touchdown, rest_pt = flight_slide_to((3.0, 3.0))
+    calls = feed(make_umpire(), pts)
+    assert len(calls) == 1 and calls[0].result == "IN"
+    call_px = calls[0].image_pt
+    assert np.hypot(call_px[0] - touchdown[0], call_px[1] - touchdown[1]) < 10.0
+    assert np.hypot(call_px[0] - rest_pt[0], call_px[1] - rest_pt[1]) > 20.0
 
 
 def test_no_call_for_points_off_the_floor():
