@@ -1,0 +1,33 @@
+{
+  "video": "S24 Ultra no.1_cfr.mp4",
+  "api": "new",
+  "frames": 600,
+  "wall_fps": 28.61,
+  "ms_per_frame": {
+    "decode_wait": 0.03,
+    "yolo": 16.65,
+    "shuttle": 12.34,
+    "pose": 5.57
+  },
+  "calls": {
+    "yolo": 590,
+    "shuttle": 590,
+    "pose": 159
+  },
+  "player": {
+    "pct_frames_with_player": 95.2,
+    "pct_frames_multi_player": 0.0,
+    "distinct_player_ids": 1,
+    "pose_calls": 159
+  },
+  "shuttle": {
+    "accel_px_median": null,
+    "accel_px_p90": null,
+    "pct_steps_jump_gt_30px": null,
+    "pct_frames_detected": 8.0,
+    "n_runs": 48,
+    "mean_run_len": 1.0,
+    "n_runs_ge_10": 0,
+    "umpire_calls": 0
+  }
+}
