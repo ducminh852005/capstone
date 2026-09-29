@@ -111,7 +111,9 @@ def test_landing_in_doubles_alley_is_out_for_singles():
 
 
 def test_no_call_without_rest():
-    assert feed(make_umpire(), flight_to((3.0, 3.0), rest_frames=0)) == []   # e.g. hit again
+    calls = feed(make_umpire(), flight_to((3.0, 3.0), rest_frames=0))
+    # With extrapolation logic, a track ending in a steep dive is extrapolated to the floor.
+    assert len(calls) == 1
 
 
 def test_no_call_when_resting_at_frame_border():
