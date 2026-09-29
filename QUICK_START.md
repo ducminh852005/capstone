@@ -39,15 +39,18 @@ Ensure you have the following installed on your system:
    ```cmd
    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
    ```
-5. Download the shuttlecock tracker weights ([TrackNetV3](https://github.com/qaz812345/TrackNetV3),
-   MIT license) and place `TrackNet_best.pt` directly under `backend/` (same folder as
-   `yolov8n.pt` and the MediaPipe `.task` files):
-   ```cmd
-   pip install gdown
-   gdown "https://drive.google.com/uc?id=1CfzE87a0f6LhBp0kniSl1-89zaLCZ8cA" -O ckpts.zip
-   tar -xf ckpts.zip ckpts/TrackNet_best.pt
-   move ckpts\TrackNet_best.pt backend\TrackNet_best.pt
-   ```
+5. Model weights live in `backend/models/` (git-ignored, download manually):
+   - `TrackNet_best.pt` ([TrackNetV3](https://github.com/qaz812345/TrackNetV3), MIT license):
+     ```cmd
+     pip install gdown
+     gdown "https://drive.google.com/uc?id=1CfzE87a0f6LhBp0kniSl1-89zaLCZ8cA" -O ckpts.zip
+     tar -xf ckpts.zip ckpts/TrackNet_best.pt
+     move ckpts\TrackNet_best.pt backend\models\TrackNet_best.pt
+     ```
+   - `yolov8n.pt` (Ultralytics YOLOv8 nano person detector): download `yolov8n.pt` from
+     https://github.com/ultralytics/assets/releases and put it in `backend/models/`.
+   - `pose_landmarker_lite.task` and `pose_landmarker_heavy.task` (MediaPipe Pose Landmarker):
+     download from https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker and put them in `backend/models/`.
    Then sanity-check it loads and measure its speed on your GPU:
    ```cmd
    cd backend
@@ -97,11 +100,11 @@ To test if the court corner detection and tracking homography work well on your 
    ```cmd
    cd backend
    .\venv\Scripts\activate
-   python scripts\test_calibration.py "path/to/your/sample.jpg"
+   python scripts\calibrate_court.py "path/to/your/sample.jpg"
    ```
    Or, better, build a clean background (median of 60 frames, players removed) from the video itself:
    ```cmd
-   python scripts\test_calibration.py --video ..\data\cfr\tran04_cam1.mp4
+   python scripts\calibrate_court.py --video ..\data\cfr\tran04_cam1.mp4
    ```
 3. A window will open. Drag the 4 corners of the **near half-court** in this order:
    - Bottom-Left
@@ -117,14 +120,16 @@ Unit tests (synthetic data, no video needed):
 ```cmd
 cd backend
 .\venv\Scripts\activate
-python -m pytest tests -q
+python -m pytest -q
 ```
+Only `backend/tests` is collected (`backend/pytest.ini`). The `scripts/demo_*.py` files are interactive
+demos, not tests. Development rules are in `CLAUDE.md`.
 
 Headless benchmark of the player + shuttle pipeline (per-stage ms/frame and quality proxies):
 ```cmd
 python scripts\benchmark_pipeline.py ..\data\cfr\tran04_cam1.mp4 --frames 1800 --out ..\data\benchmarks\run.json
 ```
-`ShuttleDetector` defaults to `backend="tracknet"` (needs `TrackNet_best.pt`, see step 5 above);
+`ShuttleDetector` defaults to `backend="tracknet"` (needs `backend/models/TrackNet_best.pt`, see step 5 above);
 pass `--shuttle-backend cv` to use the older classical background-subtraction detector instead
 (no GPU/weights needed). Quality numbers are proxies (ID stability, track continuity, shuttle
 jumps) until hand labels exist. Laptop GPUs throttle: compare runs made back to back, not runs

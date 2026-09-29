@@ -6,6 +6,8 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 import os
 
+from . import config
+
 logger = logging.getLogger(__name__)
 
 MODEL_FILES = {
@@ -72,23 +74,18 @@ def select_foot_point(landmarks, bbox_h, min_score=0.5, ground_tol=0.06):
 
 
 class PoseEstimator:
-    def __init__(self, variant=None, model_complexity=None):
+    def __init__(self, variant="lite"):
         """
         MediaPipe Pose Landmarker (Tasks API) run on a crop around one player.
-        variant: "lite" or "heavy". For backward compatibility, model_complexity=2 selects
-        "heavy" and anything else "lite".
+        variant: "lite" or "heavy".
         """
-        if variant is None:
-            variant = "heavy" if model_complexity == 2 else "lite"
         if variant not in MODEL_FILES:
             raise ValueError(f"Unknown pose variant {variant!r}, expected one of {list(MODEL_FILES)}")
         self.variant = variant
 
-        base_dir = os.path.dirname(os.path.dirname(__file__))
-        model_path = os.path.join(base_dir, "models", MODEL_FILES[variant])
+        model_path = config.MODELS_DIR / MODEL_FILES[variant]
         if not os.path.exists(model_path):
-            logger.error(f"MediaPipe Model not found at {model_path}. Please download it.")
-            raise FileNotFoundError(f"Model not found: {model_path}")
+            raise FileNotFoundError(f"MediaPipe model not found at {model_path}; see QUICK_START.md to download it")
 
         with open(model_path, 'rb') as f:
             model_bytes = f.read()

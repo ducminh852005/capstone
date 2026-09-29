@@ -8,7 +8,44 @@ condition without hunting through dozens of source files.
 
 Physical court dimensions (meters) live in court_model.py because they are
 constants of the sport, not tuning parameters.
+
+Rules for this file:
+- One definition per name, each followed by a docstring saying what it does and its unit.
+- No imports from other core modules (config must stay a leaf).
+- Filesystem locations are derived from this file's location, never from the CWD.
 """
+from pathlib import Path
+
+# =====================================================================
+#  PATHS  (derived from this file, independent of the working directory)
+# =====================================================================
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+"""Absolute path of the backend/ directory."""
+
+REPO_ROOT = BACKEND_DIR.parent
+"""Absolute path of the repository root."""
+
+DATA_DIR = REPO_ROOT / "data"
+"""Videos, calibration and metadata."""
+
+MODELS_DIR = BACKEND_DIR / "models"
+"""Model weights (git-ignored; download instructions in QUICK_START.md)."""
+
+CALIBRATION_PATH = DATA_DIR / "calibration.json"
+"""Court calibration written by scripts/calibrate_court.py."""
+
+METADATA_PATH = DATA_DIR / "metadata.csv"
+"""Per-video metadata (match type etc.)."""
+
+BENCHMARK_DIR = DATA_DIR / "benchmarks"
+"""Output directory of scripts/benchmark_pipeline.py."""
+
+TRACKNET_WEIGHTS_PATH = MODELS_DIR / "TrackNet_best.pt"
+"""TrackNetV3 checkpoint."""
+
+PLAYER_YOLO_MODEL_PATH = MODELS_DIR / "yolov8n.pt"
+"""YOLOv8 person-detection weights."""
 
 # =====================================================================
 #  SHUTTLE DETECTION  (shuttle_tracker.py, tracknet.py)
@@ -23,6 +60,13 @@ KALMAN_MIN_GATE_PX = 15.0
 the Mahalanobis test rejects them (useful when the filter's covariance
 has not converged yet, e.g. right after track initiation)."""
 
+KALMAN_MAX_SPEED_RATIO = 3.0
+"""Physics check: max allowed instantaneous speed jump ratio. If a candidate causes
+a higher speed jump, it is rejected (forces track to break on racket hits)."""
+
+KALMAN_MIN_COS_ANGLE = 0.0
+"""Physics check: min allowed cosine of angle change (0.0 = 90 deg). Sharp turns are rejected."""
+
 MIN_BODY_SPEED_PX = 8.0
 """Tracks slower than this (px/frame) ignore candidates that overlap a player
 body — prevents locking onto a limb instead of the shuttle."""
@@ -31,7 +75,14 @@ body — prevents locking onto a limb instead of the shuttle."""
 MAX_COAST_CV = 8
 """Maximum consecutive frames without a matching candidate before a track ends.
 CV backend sees every frame, so a short coast is fine; TrackNet's batched
-inference skips frames, so it needs more headroom (auto-calculated)."""
+inference skips frames, so it needs more headroom (see TRACKNET_MIN_COAST)."""
+
+TRACKNET_MIN_COAST = 12
+"""Minimum coast (frames) for TrackNet backends."""
+
+TRACKNET_COAST_MARGIN = 4
+"""Extra frames added to batch_stride when sizing TrackNet coast:
+max_coast = max(TRACKNET_MIN_COAST, batch_stride + TRACKNET_COAST_MARGIN)."""
 
 MAX_TRACK_LEN = 180
 """Maximum length of a single track (frames). Tracks longer than this are
@@ -41,12 +92,72 @@ MAX_CANDIDATES = 150
 """Maximum number of raw candidates per frame before the frame is considered
 too noisy to use (camera shake, light flicker)."""
 
+KALMAN_MEAS_STD_PX = 2.0
+"""Measurement noise std-dev (px) of a detected shuttle position."""
+
+KALMAN_ACCEL_NOISE = 3.0
+"""Process noise (jerk) scale of the constant-acceleration model."""
+
+KALMAN_INIT_STD = (4.0, 4.0, 256.0, 256.0, 25.0, 25.0)
+"""Initial covariance diagonal (x, y, vx, vy, ax, ay). The large velocity
+variance keeps the Mahalanobis gate wide enough to catch a fast shuttle on the
+very next batch (stride frames later) when a track starts from a single point."""
+
+PHYSICS_MIN_SPEED_PX = 2.0
+"""Physics filter only runs when the current track speed (px/frame) exceeds this;
+below it the direction/speed of the track is not reliable."""
+
+PHYSICS_MAX_DECEL_RATIO = 10.0
+"""Reject a candidate if it would slow the shuttle by more than this factor.
+Air drag can cost 3-4x in one batch, so 10x means it was not the same shuttle."""
+
+PHYSICS_LOOKBACK_FRAMES = 15
+"""How far back in the trajectory to look for the last valid detection."""
+
+PHYSICS_MIN_SPEED_AFTER_PX = 0.1
+"""Floor on the candidate speed (px/frame) to avoid division by zero in ratios."""
+
+BODY_TOP_FRAC = 1 / 3
+"""Fraction of a player's box (from the top) where a candidate is still allowed:
+the racket arm and hit zone; below it, candidates are legs/torso."""
+
+# --- Gap filling hit detection (ShuttleTrajectoryProcessor._likely_hit) ---
+HIT_ANGLE_COS_THRESH = 0.3
+"""Velocity direction across a gap with cosine below this counts as a hit."""
+
+HIT_SPEED_RATIO_THRESH = 2.5
+"""Speed change across a gap by more than this factor counts as a hit."""
+
+HIT_MIN_SPEED_PX = 1.0
+"""Below this speed (px/frame) direction/speed cannot be read; defer to the fit RMS."""
+
 # --- CV backend (background subtraction) ---
 CV_BG_METHOD = "knn"
+"""Background subtractor: "knn" or "mog2"."""
+
 CV_MIN_BLOB_AREA = 2
+"""Smallest blob area (px) accepted as a shuttle candidate."""
+
 CV_MAX_BLOB_AREA = 500
+"""Largest raw blob area (px) accepted as a shuttle candidate."""
+
 CV_MAX_MERGED_AREA = 900
+"""Components larger than this after dilation are bodies, not a shuttle."""
+
 CV_MAX_ELONGATION = 6.0
+"""Max bounding-box aspect ratio of a candidate blob."""
+
+CV_BG_HISTORY = 50
+"""Background subtractor history length (frames)."""
+
+CV_KNN_DIST2_THRESHOLD = 400.0
+"""KNN squared-distance threshold for the foreground decision."""
+
+CV_MOG2_VAR_THRESHOLD = 16.0
+"""MOG2 variance threshold for the foreground decision."""
+
+CV_MAX_INIT_PRODUCT = 2_000_000
+"""Cap on candidates_A * candidates_B * candidates_C in the 3-frame init search."""
 
 CV_INIT_MAX_RESIDUAL_PX = 12.0
 """3-frame init: max residual (px)"""
@@ -108,11 +219,27 @@ approaching the top of an arc does not)."""
 UMPIRE_SETTLE_SEARCH_FRAMES = 30
 """Frames after a candidate impact to look for the shuttle calming down."""
 
-from . import court_model
-UMPIRE_FLOOR_REGION = (-3.0, court_model.COURT_LENGTH + 3.0, -3.0, court_model.COURT_WIDTH + 3.0)
-"""World-coordinate bounding box for valid landing positions (meters).
-Anything outside this is a wall/ceiling hit, not a court landing.
-(full court + 3 m buffer)"""
+UMPIRE_FLOOR_BUFFER_M = 3.0
+"""Margin (meters) around the full court in which a landing is still accepted.
+Anything further out is a wall/ceiling hit, not a court landing. The region
+itself is built from the court dimensions in umpire.default_floor_region()."""
+
+UMPIRE_PERSPECTIVE_PROBE_PX = 10
+"""Vertical image offset (px) used to measure the local metres-per-pixel scale
+when converting the rest-speed threshold to perspective-corrected values."""
+
+UMPIRE_EXTRAPOLATE_MAX_FRAMES = 30
+"""When a falling shuttle is lost before touching the floor, extrapolate its
+last velocity for at most this many frames to find where it would land."""
+
+UMPIRE_EXTRAPOLATE_WINDOW = 4
+"""Number of trailing detections used to estimate the final velocity."""
+
+UMPIRE_EXTRAPOLATE_MIN_POINTS = 3
+"""Minimum detections in a flight to allow extrapolated landing."""
+
+UMPIRE_MIN_METERS_PER_PX = 1e-6
+"""Floor on the local metres-per-pixel scale (avoids division by zero)."""
 
 
 # =====================================================================
@@ -169,7 +296,7 @@ TRAJECTORY_SMOOTH_POLYORDER = 2
 
 
 # =====================================================================
-#  SMASH DETECTION  (scripts/test_smash.py)
+#  SMASH DETECTION  (core/smash.py)
 # =====================================================================
 
 SMASH_SPEED_THRESHOLD = 12.0
@@ -177,6 +304,16 @@ SMASH_SPEED_THRESHOLD = 12.0
 With TrackNet's default stride of 8, the two detection points used to
 measure speed are ~8 frames apart, so the per-frame speed is the
 displacement / 8. A real smash covers ~100+ px in 8 frames = ~12+ px/frame."""
+
+SMASH_MIN_Y = 50.0
+"""Ignore hits whose image y (px) is above this: the shuttle is out of the play area."""
+
+SMASH_MIN_ANGLE = 10.0
+"""Minimum downward angle (degrees, 0 = horizontal) of a smash's direction."""
+
+SMASH_MAX_ANGLE = 170.0
+"""Maximum angle (degrees) of a smash's direction; with SMASH_MIN_ANGLE it bounds
+the accepted cone (0 = +x axis, 90 = straight down in image coordinates)."""
 
 
 # =====================================================================
@@ -195,8 +332,14 @@ SMASH_DISPLAY_DURATION = 45
 DEBUG_LOG_INTERVAL = 60
 """How often (every N frames) to print a debug heartbeat to the terminal."""
 
-DEFAULT_VIDEO = r"..\data\cfr\tran04_cam1.mp4"
+DEFAULT_VIDEO = str(DATA_DIR / "cfr" / "tran04_cam1.mp4")
 """Default video path when none is provided on the command line."""
+
+PLAYER_DEMO_YOLO_CONF = 0.5
+"""YOLO confidence used by the demo/benchmark scripts (stricter than PLAYER_YOLO_CONF)."""
+
+UMPIRE_ALERT_FRAMES = 60
+"""How many frames the IN/OUT call overlay stays visible in the demos."""
 
 DEFAULT_BACKEND = "tracknet"
 """Default shuttle detection backend."""
@@ -211,6 +354,6 @@ MINIMAP_SIZE = (360, 720)
 MINIMAP_BG_COLOR = (0, 100, 0)
 """Minimap background color (BGR)."""
 
-# --- Tactical board (test_player_tracker.py) ---
+# --- Tactical board (demo_player_tracker.py) ---
 BOARD_SCALE = 100
 """Pixels per meter on the tactical board."""

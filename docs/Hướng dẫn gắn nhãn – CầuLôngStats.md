@@ -13,7 +13,7 @@ Chia theo trận, không chia theo đoạn cắt.
 
 \~15 phút/video. Làm đầu tiên — dùng để đo sai số homography trước và sau khi refine.
 
-Mỗi video lấy 1 ảnh nền sạch (chạy `test_calibration.py --video ...`, hoặc dùng `extract_clean_background`). Chấm mọi giao điểm **nhìn thấy** của nửa sân gần, đặt tên theo tọa độ mét:
+Mỗi video lấy 1 ảnh nền sạch (chạy `calibrate_court.py --video ...`, hoặc dùng `extract_clean_background`). Chấm mọi giao điểm **nhìn thấy** của nửa sân gần, đặt tên theo tọa độ mét:
 
 | x \\ y | 0 | 0.46 | 3.05 | 5.64 | 6.10 |
 | --- | --- | --- | --- | --- | --- |

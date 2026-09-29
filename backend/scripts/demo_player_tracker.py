@@ -2,22 +2,20 @@
 Test player tracking with YOLOv8 + ByteTrack + MediaPipe pose and a tactical heatmap.
 
 Usage:
-    python test_player_tracker.py [video_path] [--stride N] [--pose lite|heavy]
+    python demo_player_tracker.py [video_path] [--stride N] [--pose lite|heavy]
 
 Controls:
     q - Quit
 """
 import argparse
-import sys
-import time
 
 import cv2
 import numpy as np
 
 # Shared utilities (also sets up sys.path)
-from _common import FPSCounter
+from _common import setup_logging, FPSCounter, LiveTuner
 from core import court_model, trajectory
-from core.config import BOARD_SCALE, DEFAULT_VIDEO
+from core.config import BOARD_SCALE, DEFAULT_VIDEO, PLAYER_DEMO_YOLO_CONF
 from core.court_calibration import CourtCalibrator
 from core.player_tracker import PlayerTracker
 from core.video_io import ThreadedVideoReader
@@ -52,7 +50,7 @@ def render_heatmap(board, xy, fps):
     return out
 
 
-def test_tracking(video_path, stride=2, pose_variant="lite"):
+def run_tracking(video_path, stride=2, pose_variant="lite"):
     print(f"Opening video: {video_path}")
     reader = ThreadedVideoReader(video_path)
     fps = reader.fps / stride
@@ -62,8 +60,15 @@ def test_tracking(video_path, stride=2, pose_variant="lite"):
         print("WARNING: calibration.json not found. Court lines will not be drawn.")
     calibrator = CourtCalibrator()
 
-    tracker = PlayerTracker(model_path="models/yolov8n.pt", conf_thresh=0.5, fps=fps, pose_variant=pose_variant)
+    tracker = PlayerTracker(conf_thresh=PLAYER_DEMO_YOLO_CONF, fps=fps, pose_variant=pose_variant)
     print("Starting video playback... Press 'q' to stop.")
+
+    tuner = LiveTuner("Tracker Tuner")
+    # Bind to the live selector instance: config.SELECTOR_* are only read at construction.
+    tuner.bind("Min Score", tracker.selector, "min_score", 0.0, 1.0, 0.05)
+    tuner.bind("Switch Margin", tracker.selector, "switch_margin", 0.0, 1.0, 0.05)
+    tuner.bind("ReID Dist (m)", tracker.selector, "reid_dist", 0.5, 5.0, 0.25)
+    tuner.bind("ReID Window (frames)", tracker.selector, "reid_window", 30, 600, 30)
 
     board = create_tactical_board()
     board_view = board.copy()
@@ -104,6 +109,9 @@ def test_tracking(video_path, stride=2, pose_variant="lite"):
         cv2.putText(display_board, "2D Movement Heatmap", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         last_display = cv2.hconcat([display_video, display_board])
         cv2.imshow("YOLOv8 + ByteTrack: Player Tracking", last_display)
+
+        tuner.render()
+
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
@@ -112,9 +120,10 @@ def test_tracking(video_path, stride=2, pose_variant="lite"):
 
 
 if __name__ == "__main__":
+    setup_logging()
     ap = argparse.ArgumentParser()
     ap.add_argument("video", nargs="?", default=DEFAULT_VIDEO)
     ap.add_argument("--stride", type=int, default=2, help="process every N-th frame")
     ap.add_argument("--pose", default="lite", choices=["lite", "heavy"])
     args = ap.parse_args()
-    test_tracking(args.video, args.stride, args.pose)
+    run_tracking(args.video, args.stride, args.pose)

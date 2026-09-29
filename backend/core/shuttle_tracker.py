@@ -8,8 +8,6 @@ from . import config
 
 logger = logging.getLogger(__name__)
 
-CHI2_2DOF_99 = config.KALMAN_CHI2_GATE
-
 
 class ShuttleTrajectoryProcessor:
     def __init__(self, max_gap_frames=config.SHUTTLE_MAX_GAP_FRAMES,
@@ -71,7 +69,7 @@ class ShuttleTrajectoryProcessor:
                 continue
             gap_length = gap_end - gap_start + 1
             if gap_length > self.max_gap_frames:
-                logger.debug(f"Gap of {gap_length} frames is too large, skipping interpolation.")
+                logger.debug("Gap of %d frames is too large, skipping interpolation.", gap_length)
                 continue
 
             pos = bisect.bisect_left(valid_indices, gap_start)
@@ -99,7 +97,8 @@ class ShuttleTrajectoryProcessor:
         return filled
 
     @staticmethod
-    def _likely_hit(trajectory, before, after, angle_cos_thresh=0.3, speed_ratio_thresh=2.5):
+    def _likely_hit(trajectory, before, after, angle_cos_thresh=config.HIT_ANGLE_COS_THRESH,
+                    speed_ratio_thresh=config.HIT_SPEED_RATIO_THRESH):
         """
         True if the velocity across the gap looks like it changed at a hit rather than
         coasting on inertia: the direction sharply turns (checked on both axes, not just
@@ -110,7 +109,7 @@ class ShuttleTrajectoryProcessor:
         v_before = (np.subtract(trajectory[before[-1]], trajectory[before[0]])) / max(before[-1] - before[0], 1)
         v_after = (np.subtract(trajectory[after[-1]], trajectory[after[0]])) / max(after[-1] - after[0], 1)
         speed_before, speed_after = np.linalg.norm(v_before), np.linalg.norm(v_after)
-        if speed_before < 1.0 or speed_after < 1.0:
+        if speed_before < config.HIT_MIN_SPEED_PX or speed_after < config.HIT_MIN_SPEED_PX:
             return False  # too slow to read direction/speed; let the parabola fit RMS decide
         cos_angle = np.dot(v_before, v_after) / (speed_before * speed_after)
         direction_turned = cos_angle < angle_cos_thresh
@@ -121,7 +120,7 @@ class ShuttleTrajectoryProcessor:
 class ConstantAccelerationKalman:
     """2D constant-acceleration Kalman filter, state (x, y, vx, vy, ax, ay), dt = 1 frame."""
 
-    def __init__(self, meas_std=2.0, accel_noise=3.0):
+    def __init__(self, meas_std=config.KALMAN_MEAS_STD_PX, accel_noise=config.KALMAN_ACCEL_NOISE):
         self.F = np.eye(6)
         self.F[0, 2] = self.F[1, 3] = 1.0
         self.F[2, 4] = self.F[3, 5] = 1.0
@@ -143,7 +142,9 @@ class ConstantAccelerationKalman:
         v = p3 - p2
         a = p3 - 2 * p2 + p1
         self.x = np.array([p3[0], p3[1], v[0], v[1], a[0], a[1]])
-        self.P = np.diag([4.0, 4.0, 16.0, 16.0, 25.0, 25.0])
+        # Large initial velocity variance keeps the Mahalanobis gate wide enough to catch a
+        # fast-moving shuttle on the very next batch when initialised from a single point.
+        self.P = np.diag(config.KALMAN_INIT_STD)
 
     def predict(self):
         self.x = self.F @ self.x
@@ -164,14 +165,6 @@ class ConstantAccelerationKalman:
         self.x = self.x + K @ (np.asarray(z, float) - self.x[:2])
         self.P = (np.eye(6) - K @ self.Hm) @ self.P
 
-    def predict_ahead(self, n):
-        x = self.x.copy()
-        out = []
-        for _ in range(n):
-            x = self.F @ x
-            out.append((float(x[0]), float(x[1])))
-        return out
-
 
 class CVCandidateSource:
     """
@@ -186,9 +179,11 @@ class CVCandidateSource:
                  max_elongation=config.CV_MAX_ELONGATION):
         self.processor = ShuttleTrajectoryProcessor()
         if bg_method == "knn":
-            self.bg_subtractor = cv2.createBackgroundSubtractorKNN(history=50, dist2Threshold=400, detectShadows=False)
+            self.bg_subtractor = cv2.createBackgroundSubtractorKNN(
+                history=config.CV_BG_HISTORY, dist2Threshold=config.CV_KNN_DIST2_THRESHOLD, detectShadows=False)
         elif bg_method == "mog2":
-            self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(history=50, varThreshold=16, detectShadows=False)
+            self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
+                history=config.CV_BG_HISTORY, varThreshold=config.CV_MOG2_VAR_THRESHOLD, detectShadows=False)
         else:
             raise ValueError(f"Unknown bg_method {bg_method!r}")
 
@@ -247,6 +242,8 @@ class ShuttleDetector:
                  init_max_residual_px=config.CV_INIT_MAX_RESIDUAL_PX,
                  init_speed_px=config.CV_INIT_SPEED_RANGE,
                  init_min_confidence=config.TRACKNET_INIT_MIN_CONFIDENCE,
+                 max_speed_ratio=config.KALMAN_MAX_SPEED_RATIO,
+                 min_cos_angle=config.KALMAN_MIN_COS_ANGLE,
                  simple_init=None):
         """
         Shuttle tracker: pluggable candidate generation (backend="cv" classical background
@@ -263,7 +260,7 @@ class ShuttleDetector:
 
         backend="cv" params: bg_method, min_area, max_area, max_merged_area, max_elongation,
             init_max_residual_px, init_speed_px (3-frame init consistency check).
-        backend="tracknet" params: tracknet_path (default backend/TrackNet_best.pt),
+        backend="tracknet" params: tracknet_path (default backend/models/TrackNet_best.pt),
             tracknet_kwargs (dict, forwarded to TrackNetCandidateSource: batch_stride,
             conf_threshold, bg_frames, device), init_min_confidence (single-point init).
         backend="tracknet-onnx" params: tracknet_path (same checkpoint, read for its
@@ -275,29 +272,37 @@ class ShuttleDetector:
             self._source = CVCandidateSource(bg_method=bg_method, min_area=min_area, max_area=max_area,
                                              max_merged_area=max_merged_area, max_elongation=max_elongation)
             self.simple_init = False if simple_init is None else simple_init
-            self.max_coast = 8 if max_coast is None else max_coast
+            self.max_coast = config.MAX_COAST_CV if max_coast is None else max_coast
         elif backend == "tracknet":
             self._source = TrackNetCandidateSource(tracknet_path, **(tracknet_kwargs or {}))
             self.simple_init = True if simple_init is None else simple_init
             # nonoverlap batching only reports a real detection every batch_stride frames;
             # give coast enough headroom to ride out that structural gap plus a few misses.
-            self.max_coast = max(12, self._source.batch_stride + 4) if max_coast is None else max_coast
+            self.max_coast = self._tracknet_coast() if max_coast is None else max_coast
         elif backend == "tracknet-onnx":
             from .tracknet_onnx import TrackNetONNXCandidateSource
             self._source = TrackNetONNXCandidateSource(tracknet_path, **(tracknet_kwargs or {}))
             self.simple_init = True if simple_init is None else simple_init
-            self.max_coast = max(12, self._source.batch_stride + 4) if max_coast is None else max_coast
+            self.max_coast = self._tracknet_coast() if max_coast is None else max_coast
         else:
             raise ValueError(f"Unknown backend {backend!r}, expected 'cv', 'tracknet' or 'tracknet-onnx'")
         self.backend = backend
 
         self.max_candidates = max_candidates
         self.max_track_len = max_track_len
-        self.min_gate_px = min_gate_px
+
+        # Scale the Euclidean gate by the batch stride: between two detections the shuttle
+        # travels stride frames' worth of distance. The physics filter then separates hits
+        # from air drag.
+        stride = getattr(self._source, "batch_stride", 1)
+        self.min_gate_px = min_gate_px * max(1, stride)
+
         self.min_body_speed = min_body_speed
         self.init_max_residual = init_max_residual_px
         self.init_speed = init_speed_px
         self.init_min_confidence = init_min_confidence
+        self.max_speed_ratio = max_speed_ratio
+        self.min_cos_angle = min_cos_angle
 
         self.kf = ConstantAccelerationKalman()
         self.track_active = False
@@ -306,6 +311,10 @@ class ShuttleDetector:
         self._recent_candidates = []   # candidate arrays of the last 2 frames, for track initiation
         self.trajectory = []           # one (x, y) or None per detect() call, full-frame pixels
         self.last_roi = None
+
+    def _tracknet_coast(self):
+        """Coast (frames) for TrackNet backends: enough to ride out the batch stride."""
+        return max(config.TRACKNET_MIN_COAST, self._source.batch_stride + config.TRACKNET_COAST_MARGIN)
 
     @staticmethod
     def _in_boxes(pts, boxes, top_frac=0.0):
@@ -316,12 +325,46 @@ class ShuttleDetector:
             inside |= (pts[:, 0] >= x1) & (pts[:, 0] <= x2) & (pts[:, 1] >= top) & (pts[:, 1] <= y2)
         return inside
 
+    def _last_valid_point(self):
+        """(point, frames_ago) of the most recent detection within the look-back window."""
+        for k in range(1, min(config.PHYSICS_LOOKBACK_FRAMES, len(self.trajectory) + 1)):
+            if self.trajectory[-k] is not None:
+                return np.array(self.trajectory[-k]), k
+        return None, 0
+
+    def _physics_reject(self, cands):
+        """
+        Boolean mask of candidates that one continuous flight cannot explain.
+
+        Air drag can slow a shuttle 3-4x within one batch, but a real hit typically
+        ACCELERATES it or turns it sharply. So a candidate is rejected when it would speed
+        the shuttle up by more than max_speed_ratio, slow it by more than
+        PHYSICS_MAX_DECEL_RATIO, or turn it by more than acos(min_cos_angle). Nothing is
+        rejected while the track is too new or too slow to read a direction from.
+        """
+        reject = np.zeros(len(cands), dtype=bool)
+        last_pt, dt = self._last_valid_point()
+        if self.track_len < 2 or last_pt is None:
+            return reject
+        v_before = self.kf.x[2:4]
+        speed_before = np.linalg.norm(v_before)
+        if speed_before <= config.PHYSICS_MIN_SPEED_PX:
+            return reject
+
+        v_after = (cands - last_pt) / dt
+        speed_after = np.linalg.norm(v_after, axis=1)
+        speed_after_clamped = np.maximum(speed_after, config.PHYSICS_MIN_SPEED_AFTER_PX)
+        speed_jumped = ((speed_after / speed_before > self.max_speed_ratio)
+                        | (speed_before / speed_after_clamped > config.PHYSICS_MAX_DECEL_RATIO))
+        cos_angle = np.sum(v_before * v_after, axis=1) / (speed_before * speed_after_clamped)
+        return (cos_angle < self.min_cos_angle) | speed_jumped
+
     def _try_init(self, cands):
         """CV backend: find c1, c2, c3 in three consecutive frames with c3 ~ 2*c2 - c1."""
         if len(self._recent_candidates) < 2:
             return None
         A, B = self._recent_candidates
-        if len(A) * len(B) * len(cands) > 2_000_000:
+        if len(A) * len(B) * len(cands) > config.CV_MAX_INIT_PRODUCT:
             return None
         if not len(A) or not len(B) or not len(cands):
             return None
@@ -379,7 +422,7 @@ class ShuttleDetector:
 
         on_body = np.zeros(len(cands), dtype=bool)
         if player_boxes is not None and len(player_boxes) and len(cands):
-            on_body = self._in_boxes(cands, player_boxes, top_frac=1 / 3)
+            on_body = self._in_boxes(cands, player_boxes, top_frac=config.BODY_TOP_FRAC)
 
         best_pt = None
         if self.track_active:
@@ -387,11 +430,19 @@ class ShuttleDetector:
             if len(cands):
                 d2 = self.kf.mahalanobis2(cands)
                 eucl = np.linalg.norm(cands - self.kf.x[:2], axis=1)
-                in_gate = (d2 <= CHI2_2DOF_99) | (eucl <= self.min_gate_px)
+                in_gate = (d2 <= config.KALMAN_CHI2_GATE) | (eucl <= self.min_gate_px)
                 # a shuttle crossing a player's body is fast (just hit); slow blobs there are limbs
                 if np.linalg.norm(self.kf.x[2:4]) < self.min_body_speed:
                     in_gate &= ~on_body
-                if in_gate.any():
+
+                physics_reject = self._physics_reject(cands)
+                # A candidate close enough to be the shuttle but breaking the laws of physics
+                # means the shuttle was hit: end the track so a new one can start.
+                if (in_gate & physics_reject).any():
+                    self.track_active = False
+                in_gate &= ~physics_reject
+
+                if self.track_active and in_gate.any():
                     i = int(np.argmin(np.where(in_gate, d2, np.inf)))
                     self.kf.update(cands[i])
                     best_pt = (int(round(cands[i, 0])), int(round(cands[i, 1])))
@@ -423,10 +474,6 @@ class ShuttleDetector:
         self.trajectory.append(best_pt)
         return best_pt, mask
 
-    def predict_ahead(self, n_frames):
-        """Kalman extrapolation of the active track for the next n frames ([] if no track)."""
-        return self.kf.predict_ahead(n_frames) if self.track_active else []
-
     def draw_trajectory(self, frame, tail_length=20):
         """Trailing path of the shuttle: older segments thin and dark, newer ones thick and bright."""
         annotated = frame.copy()
@@ -444,17 +491,3 @@ class ShuttleDetector:
             cv2.circle(annotated, self.trajectory[-1], 6, (0, 0, 255), -1)
         return annotated
 
-
-if __name__ == "__main__":
-    processor = ShuttleTrajectoryProcessor()
-
-    # Simulate a shuttle going up, going missing for 3 frames, then coming down
-    mock_path = [
-        (100, 500), (110, 400), (120, 310), (130, 230),  # ascending
-        None, None, None,                                # out of frame!
-        (170, 230), (180, 310), (190, 400), (200, 500)   # descending
-    ]
-
-    fixed_path = processor.fill_missing_trajectory(mock_path)
-    for i, pt in enumerate(fixed_path):
-        print(f"Frame {i}: {pt} {'(Interpolated)' if mock_path[i] is None else ''}")

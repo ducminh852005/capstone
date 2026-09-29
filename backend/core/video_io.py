@@ -42,7 +42,13 @@ class ThreadedVideoReader:
                 except queue.Full:
                     continue
             idx += 1
-        self._queue.put(self._END)
+        # Signal end of stream, but never block forever on a full queue after release().
+        while not self._stop.is_set():
+            try:
+                self._queue.put(self._END, timeout=0.1)
+                return
+            except queue.Full:
+                continue
 
     def __iter__(self):
         while True:

@@ -12,10 +12,11 @@ import time
 
 import torch
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import _common  # noqa: F401  (puts backend/ on sys.path)
+from core import config
 from core.tracknet_model import TrackNet, WIDTH, HEIGHT, in_dim_for
 
-DEFAULT_CKPT = os.path.join(os.path.dirname(__file__), "..", "models/TrackNet_best.pt")
+DEFAULT_CKPT = config.TRACKNET_WEIGHTS_PATH
 
 
 def main():

@@ -32,19 +32,45 @@ backend instead (see `simple_init` in shuttle_tracker.py).
 """
 import logging
 import os
+import pickle
 from collections import deque
 
 import cv2
 import numpy as np
 import torch
 
+from . import config
 from .tracknet_model import TrackNet, WIDTH, HEIGHT, in_dim_for
 
 logger = logging.getLogger(__name__)
 
-from . import config
+DEFAULT_WEIGHTS_PATH = config.TRACKNET_WEIGHTS_PATH
 
-DEFAULT_WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "..", "models", "TrackNet_best.pt")
+
+def resolve_weights_path(weights_path=None):
+    """Existing checkpoint path (default: config.TRACKNET_WEIGHTS_PATH) or FileNotFoundError."""
+    weights_path = weights_path or DEFAULT_WEIGHTS_PATH
+    if not os.path.exists(weights_path):
+        raise FileNotFoundError(
+            f"TrackNetV3 weights not found at {weights_path}. Download TrackNet_best.pt "
+            f"from https://github.com/qaz812345/TrackNetV3 (see QUICK_START.md) and place "
+            f"it at backend/models/TrackNet_best.pt, or pass weights_path explicitly."
+        )
+    return weights_path
+
+
+def load_checkpoint(weights_path, map_location="cpu"):
+    """
+    torch.load restricted to tensors and plain containers (weights_only=True). Only if the
+    checkpoint contains other pickled objects do we fall back to full unpickling, which can
+    execute arbitrary code -- so that is logged, and the file must come from a trusted source.
+    """
+    try:
+        return torch.load(weights_path, map_location=map_location, weights_only=True)
+    except pickle.UnpicklingError:
+        logger.warning("%s needs full unpickling (weights_only=False); load only trusted checkpoints",
+                       weights_path)
+        return torch.load(weights_path, map_location=map_location, weights_only=False)
 
 
 def heatmap_to_candidates(heat, threshold=0.5):
@@ -119,15 +145,9 @@ class TrackNetCandidateSource:
                   restores the ~3% rate with zero non-finite batches. Only pass True if
                   you've verified finite outputs on your specific GPU/torch/cuDNN build.
         """
-        weights_path = weights_path or DEFAULT_WEIGHTS_PATH
-        if not os.path.exists(weights_path):
-            raise FileNotFoundError(
-                f"TrackNetV3 weights not found at {weights_path}. Download TrackNet_best.pt "
-                f"from https://github.com/qaz812345/TrackNetV3 (see QUICK_START.md) and place "
-                f"it at backend/TrackNet_best.pt, or pass weights_path explicitly."
-            )
+        weights_path = resolve_weights_path(weights_path)
         self.device = torch.device(device) if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        ckpt = torch.load(weights_path, map_location=self.device, weights_only=False)
+        ckpt = load_checkpoint(weights_path, map_location=self.device)
         params = ckpt["param_dict"]
         self.seq_len = int(params["seq_len"])
         self.bg_mode = params["bg_mode"]
@@ -142,13 +162,17 @@ class TrackNetCandidateSource:
         if self.device.type == "cuda":
             torch.backends.cudnn.benchmark = True
 
+        self._init_state(batch_stride, conf_threshold, bg_frames)
+
+    def _init_state(self, batch_stride, conf_threshold, bg_frames):
+        """Runtime-independent state; needs self.seq_len and self.bg_mode to be set already."""
         self.batch_stride = batch_stride or self.seq_len
         self.conf_threshold = conf_threshold
         self.needs_bg = bool(self.bg_mode)
         self.bg_frames_needed = bg_frames
 
         self._bg_samples = []
-        self._bg_tensor = None          # (3, H, W), already /255, set once warm-up completes
+        self._bg_tensor = None          # background in the runtime's format, set once warm-up completes
         self._window = deque(maxlen=self.seq_len)  # sliding window of the last seq_len resized frames
         self._since_last_run = 0        # new frames seen since the last forward pass
         self._last_mask = np.zeros((HEIGHT, WIDTH), dtype=np.uint8)
@@ -166,11 +190,14 @@ class TrackNetCandidateSource:
         if len(self._bg_samples) < self.bg_frames_needed:
             return False
         median = np.median(np.stack(self._bg_samples, axis=0), axis=0).astype(np.uint8)  # (H, W, 3)
-        chw = np.moveaxis(median, -1, 0).astype(np.float32) / 255.0
-        t = torch.from_numpy(chw).to(self.device)
-        self._bg_tensor = t.half() if self.use_half else t
+        self._bg_tensor = self._background_from_median(np.moveaxis(median, -1, 0).astype(np.float32) / 255.0)
         self._bg_samples = []
         return True
+
+    def _background_from_median(self, chw):
+        """(3, H, W) float32 in [0, 1] -> the format _run_batch expects (torch tensor here)."""
+        t = torch.from_numpy(chw).to(self.device)
+        return t.half() if self.use_half else t
 
     def ready(self):
         return not self.needs_bg or self._bg_tensor is not None

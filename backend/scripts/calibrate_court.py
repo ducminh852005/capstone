@@ -1,11 +1,13 @@
 import argparse
+import json
+import logging
 import os
 import sys
+
 import cv2
 import numpy as np
-import json
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import _common  # noqa: F401  (puts backend/ on sys.path)
 from core import court_model
 from core.court_calibration import CourtCalibrator
 
@@ -35,7 +37,7 @@ def interactive_calibration(image_path=None, video_path=None):
     config_path = court_model.DEFAULT_CALIB_PATH
     image_points = [[w // 4, h * 3 // 4], [w * 3 // 4, h * 3 // 4], [w // 4, h // 4], [w * 3 // 4, h // 4]]
     if os.path.exists(config_path):
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             image_points = [list(map(int, p)) for p in json.load(f).get("image_points", image_points)]
 
     world_points = court_model.CALIB_WORLD_POINTS
@@ -106,17 +108,17 @@ def interactive_calibration(image_path=None, video_path=None):
             data = {}
             if os.path.exists(config_path):
                 try:
-                    with open(config_path, "r") as f:
+                    with open(config_path, "r", encoding="utf-8") as f:
                         data = json.load(f)
-                except Exception:
-                    pass
-                    
+                except (OSError, ValueError) as e:
+                    logging.getLogger(__name__).warning("Could not read existing %s (%s); overwriting", config_path, e)
+
             data["image_points"] = image_points
             if refined_H is not None:
                 data["H"] = refined_H.tolist()
             elif "H" in data:
                 del data["H"]
-                
+
             with open(config_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
             print(f"Calibration saved to {config_path}{' (with refined H)' if refined_H is not None else ''}!")
@@ -133,6 +135,6 @@ if __name__ == "__main__":
     ap.add_argument("--video", help="build a clean background from this video instead (recommended for refinement)")
     args = ap.parse_args()
     if not args.image and not args.video:
-        print("Usage: python test_calibration.py <path_to_image> | --video <path_to_video>")
+        print("Usage: python calibrate_court.py <path_to_image> | --video <path_to_video>")
         sys.exit(1)
     interactive_calibration(args.image, args.video)

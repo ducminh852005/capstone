@@ -140,3 +140,50 @@ def test_fill_missing_leaves_long_gaps():
     traj = [truth(t) for t in range(5)] + [None] * 20 + [truth(t) for t in range(25, 30)]
     filled = proc.fill_missing_trajectory(traj)
     assert all(p is None for p in filled[5:25])
+
+
+# --- physics filter (racket-hit detection) ---------------------------------------------
+
+def _tracking_detector(speed=10.0):
+    """CV detector with a running track moving right at `speed` px/frame, last seen at (120, 100)."""
+    det = ShuttleDetector(backend="cv")
+    det.kf.init((120 - 2 * speed, 100), (120 - speed, 100), (120, 100))
+    det.track_active = True
+    det.track_len = 3
+    det.trajectory = [(int(120 - speed), 100), (120, 100)]
+    return det
+
+
+def test_physics_accepts_continued_flight_and_rejects_hits():
+    det = _tracking_detector()
+    cands = np.array([
+        [130.0, 100.0],     # keeps going: fine
+        [110.0, 100.0],     # reversed direction: a racket hit
+        [200.0, 100.0],     # 8x speed jump: a racket hit
+        [120.5, 100.0],     # 20x deceleration: not the same shuttle
+    ])
+    assert det._physics_reject(cands).tolist() == [False, True, True, True]
+
+
+def test_physics_does_nothing_for_slow_or_new_tracks():
+    slow = _tracking_detector(speed=1.0)
+    assert not slow._physics_reject(np.array([[100.0, 100.0]])).any()   # reversal ignored: too slow to read
+    new = _tracking_detector()
+    new.track_len = 1
+    assert not new._physics_reject(np.array([[100.0, 100.0]])).any()
+
+
+def test_hit_inside_gate_ends_the_track(monkeypatch):
+    det = _tracking_detector()
+    # a reversal candidate 10 px behind the shuttle: inside the Euclidean gate, but unphysical
+    monkeypatch.setattr(det._source, "generate",
+                        lambda frame, roi: (np.array([[110.0, 100.0]]), np.ones(1), np.zeros((4, 4), np.uint8)))
+    pt, _ = det.detect(np.zeros((10, 10, 3), np.uint8))
+    assert pt is None
+    assert not det.track_active
+
+
+def test_cv_coast_comes_from_config():
+    from core import config
+    assert ShuttleDetector(backend="cv").max_coast == config.MAX_COAST_CV
+    assert ShuttleDetector(backend="cv", max_coast=3).max_coast == 3

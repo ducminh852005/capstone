@@ -11,8 +11,11 @@ The system is modularized into independent computer vision pipelines that can be
 ### Core Pipelines:
 1. **Spatial Calibration**: Maps 2D video pixels to 3D physical world coordinates using Homography.
 2. **Player Tracking (Tactical Board)**: YOLOv8 + ByteTrack object tracking projected onto a 2D minimap.
-3. **Shuttlecock Tracking**: High-speed, lightweight classical CV (Background Subtraction) enhanced with a Physics-based tracker.
-4. **Auto Umpire (Hawk-Eye)**: State machine logic combining spatial calibration and shuttle trajectory to make IN/OUT decisions.
+3. **Shuttlecock Tracking**: A candidate generator (TrackNetV3 by default, classical background subtraction as a fallback) feeding a constant-acceleration Kalman tracker with a physics filter.
+4. **Auto Umpire (Hawk-Eye)**: Landing detection on shuttle tracks combined with spatial calibration to make IN/OUT decisions.
+5. **Smash Detection**: Speed and direction of the shuttle right after each racket hit (`core/smash.py`).
+
+Development rules (coordinate systems, units, config, paths, testing, style) are in [`../CLAUDE.md`](../CLAUDE.md). Read it before changing code.
 
 ---
 
@@ -20,24 +23,26 @@ The system is modularized into independent computer vision pipelines that can be
 
 ### A. Court Calibration (`core/court_calibration.py`)
 - **Purpose**: Establishes the relationship between the camera angle and the physical court dimensions.
-- **Mechanism**: The user interactively clicks 4 corners of the *Near Court*. The script uses `cv2.getPerspectiveTransform` to generate a Homography Matrix (`H`) and its inverse (`H_inv`).
-- **Output**: Saves the matrix data to `data/calibration.json`.
+- **Mechanism**: The user interactively clicks 4 corners of the *Near Court* (`scripts/calibrate_court.py`). `court_model.homography_from_points` fits the Homography Matrix (`H`, world to image) with `cv2.findHomography`, and its inverse `H_inv` maps image to world. Optionally (key `R`) `CourtCalibrator.refine_homography` snaps it to the painted lines of a clean-background image.
+- **Output**: Saves the corner points (and the refined `H`) to `data/calibration.json`, which `court_model.load_calibration()` reads.
 
-### B. Physics-Based Shuttle Tracker (`core/shuttle_tracker.py`)
-- **Isolation**: Uses `cv2.createBackgroundSubtractorKNN(history=50)` combined with morphological Top-Hat filtering to isolate moving bright objects.
-- **Physics Tracker**: Instead of blindly tracking the closest object, it simulates a **Parabolic Trajectory**:
-  1. **Velocity Calculation**: `vx, vy` are calculated from the last 2 frames.
-  2. **Gravity Bias**: A downward pull (`vy += 2`) is applied.
-  3. **Scoring System**: Objects are scored based on their distance to the *predicted momentum path* (70% weight) and the *last known position* (30% weight).
-  4. **Result**: This heavily penalizes false positives (like moving white shoes) and strictly locks onto objects following a smooth, high-speed ballistic curve. Bounces and racket hits are caught by the 30% spatial proximity fallback.
+### B. Kalman Shuttle Tracker (`core/shuttle_tracker.py`)
+- **Candidates**: a pluggable source returns candidate points per frame: `TrackNetCandidateSource` (default, section E) or `CVCandidateSource` (KNN/MOG2 background subtraction + top-hat filtering).
+- **Tracker**: `ConstantAccelerationKalman` (state `x, y, vx, vy, ax, ay`, dt = 1 frame). Each frame a candidate is accepted if it lies inside the Mahalanobis gate (`KALMAN_CHI2_GATE`) or within `min_gate_px` (scaled by the source's `batch_stride`). Candidates on a player's legs/torso are ignored unless the track is fast.
+- **Physics filter** (`ShuttleDetector._physics_reject`): a candidate inside the gate that would speed the shuttle up by more than `max_speed_ratio`, slow it by more than `PHYSICS_MAX_DECEL_RATIO`, or turn it by more than `acos(min_cos_angle)` is a racket hit, not the same flight. The track is ended so a new one starts at the hit. Air drag alone (3-4x slowdown per batch) is accepted.
+- **Track lifecycle**: a track survives `max_coast` frames without a match (`MAX_COAST_CV` for CV; `max(TRACKNET_MIN_COAST, batch_stride + TRACKNET_COAST_MARGIN)` for TrackNet) and at most `MAX_TRACK_LEN` frames.
 
-### C. Auto Umpire (`scripts/test_auto_umpire.py`)
-- **Landing Detection**: Triggers a "Landing Event" if the shuttle is lost for `> 15 frames` (due to stopping on the floor and being absorbed by the Background Subtractor).
-- **Anti-Pickup Sensor (Height Filter)**: Tracks the `min_y` (highest physical point) during a rally. If the shuttle never exceeds the virtual net height (Net base Y - 50 pixels), the system ignores the landing event. This prevents scoring when players pick up or roll the shuttle.
-- **Dynamic ROI Cropping**: Crops 15% off the left/right sides to blind the system to audience members and off-court noise.
-- **Scoring**: Applies `H_inv` to the landing pixel to get physical meters. Checks if `0 <= X <= 6.7` (Near Court) and `0 <= Y <= 6.1`.
+### C. Auto Umpire (`core/umpire.py`, demo: `scripts/demo_auto_umpire.py`)
+- **Flights**: `RallyUmpire.update()` buffers the detections of one shuttle track (one flight). When the track ends, the flight is judged.
+- **Landing detection** (`landing_point`): the first sharp break from free fall after the shuttle has descended `min_descent` px: vertical speed drops to `bounce_decel_ratio` of the peak fall speed. It is accepted only if the shuttle then calms down (`rest_frames` slow steps within `settle_search_frames`). The rest-speed threshold is scaled per point by perspective (a pixel means fewer metres near the camera). If the track is lost while still falling fast, the last velocity is extrapolated up to `UMPIRE_EXTRAPOLATE_MAX_FRAMES` frames to the floor.
+- **Anti-pickup filter**: a flight that never rose above the net threshold (`net_top_y`) is ignored (players picking up or rolling the shuttle).
+- **Invalid contacts**: a contact on a person, near the ROI edge, or outside the floor region (court plus `UMPIRE_FLOOR_BUFFER_M`) is not a landing.
+- **Scoring** (`judge`): `H_inv` maps the contact to metres; the x position against `NET_X` picks the half; lines count as IN (half a line width is added). `close_call` is flagged when `|margin| < close_call_m`. Match type (singles/doubles) comes from `data/metadata.csv`.
 
-### D. Tactical Heatmap (`scripts/test_player_tracker.py`)
+### D. Smash Detection (`core/smash.py`, demo: `scripts/demo_smash.py`)
+- A hit is a new Kalman track. `SmashDetector` measures the speed (px/frame) and direction from the track start to its first real detection, and flags a smash when speed exceeds `SMASH_SPEED_THRESHOLD`, the hit is below `SMASH_MIN_Y`, and the angle is within `SMASH_MIN_ANGLE..SMASH_MAX_ANGLE`.
+
+### D2. Tactical Heatmap (`scripts/demo_player_tracker.py`)
 - YOLOv8 detects players, ByteTrack maintains IDs.
 - Extracts the "foot point" (bottom-center of the bounding box).
 - Uses `H_inv` to map the foot point onto a static 2D green minimap, drawing translucent red circles to form a movement heatmap.
@@ -87,26 +92,35 @@ Every stage got slower with the ONNX backend active -- including YOLO and MediaP
 
 Whenever you switch to a new camera angle or video (e.g., from `tran04` to `tran01`), you MUST recalibrate the spatial matrix.
 
-**Step 1: Extract a sample frame from the new video**
+Commands run from `backend/` (paths are resolved from the file locations, so any working directory works).
+
+**Step 1: Convert the raw video to constant frame rate (60 fps)**
 ```bash
-# Example command using ffmpeg or python script
+python scripts/process_all_videos.py   # data/raw/*.mp4 -> data/cfr/*.mp4
 ```
 
 **Step 2: Run Calibration (Interactive)**
 ```bash
-python scripts/test_calibration.py ../data/frames/tran01_frame.jpg
-# Click the 4 corners of the Near Court: Bottom-Left, Bottom-Right, Net-Left, Net-Right. Press SPACE.
+python scripts/calibrate_court.py --video ../data/cfr/tran01_cam1.mp4
+# Click/drag the 4 corners of the Near Court: Bottom-Left, Bottom-Right, Net-Left, Net-Right. R refines, SPACE saves.
 ```
 
 **Step 3: Run the Auto Umpire**
 ```bash
-python scripts/test_auto_umpire.py ../data/cfr/tran01_cam1.mp4
+python scripts/demo_auto_umpire.py ../data/cfr/tran01_cam1.mp4
 ```
 
-**Step 4: Run Player Heatmap**
+**Step 4: Run Player Heatmap / Smash demo**
 ```bash
-python scripts/test_player_tracker.py ../data/cfr/tran01_cam1.mp4
+python scripts/demo_player_tracker.py ../data/cfr/tran01_cam1.mp4
+python scripts/demo_smash.py ../data/cfr/tran01_cam1.mp4
 ```
+
+**Tests**
+```bash
+python -m pytest        # runs backend/tests only (pytest.ini excludes scripts/)
+```
+`scripts/demo_*.py` are interactive OpenCV demos and are not tests. `scripts/debug_track_state.py` prints the tracker state frame by frame for a frame window.
 
 ---
 

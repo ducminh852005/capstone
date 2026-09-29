@@ -46,8 +46,7 @@ class CourtCalibrator:
         """
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
-            logger.error("Failed to open video")
-            return None
+            raise IOError(f"Could not open video: {video_path}")
 
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         num_frames = min(num_frames, total_frames)
@@ -195,7 +194,7 @@ class CourtCalibrator:
         errors = np.linalg.norm(np.asarray(test_image_points, dtype=np.float32).reshape(-1, 2) - projected, axis=1)
         mean_error, max_error = float(errors.mean()), float(errors.max())
         if mean_error > threshold:
-            logger.warning(f"Calibration warning: Mean error {mean_error:.2f} > threshold {threshold}")
+            logger.warning("Calibration warning: Mean error %.2f > threshold %s", mean_error, threshold)
             return False, mean_error, max_error
         return True, mean_error, max_error
 
@@ -247,7 +246,3 @@ class CourtCalibrator:
         for pt in np.int32(court_model.world_to_img(court_model.CALIB_WORLD_POINTS, H)):
             cv2.circle(result, (int(pt[0]), int(pt[1])), 5, (0, 0, 255), -1)
         return result
-
-
-if __name__ == "__main__":
-    pass

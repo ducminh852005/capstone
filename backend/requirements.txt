@@ -1,19 +1,29 @@
-fastapi
-uvicorn[standard]
-sqlalchemy
-psycopg2-binary
-pydantic
-pydantic-settings
-opencv-python
-ultralytics
-python-multipart
-python-dotenv
-alembic
-mediapipe
-scipy
-pytest
-gdown
+# Versions below are the ones the test suite is run against (see backend/venv).
+
+# --- computer vision / ML (used by backend/core) ---
+opencv-python==5.0.0.93
+numpy==2.5.2
+scipy==1.18.1
+ultralytics==8.4.163
+mediapipe==0.10.35
 onnx
+
+# --- API scaffold (backend/main.py, database.py); not wired to the pipeline yet ---
+fastapi==0.141.1
+uvicorn[standard]==0.54.0
+sqlalchemy==2.1.1
+pydantic==2.13.5
+python-dotenv==1.2.3
+# Not imported anywhere yet; keep only if the API/database work needs them:
+alembic==1.20.0
+psycopg2-binary==2.9.13
+pydantic-settings==2.15.0
+python-multipart==0.0.32
+
+# --- dev / tooling ---
+pytest==9.1.1
+gdown==6.4.0
+pyflakes
 
 # onnxruntime-gpu pinned: the latest (1.30+) requires CUDA 13.x/cuDNN 9 system libs and
 # silently falls back to CPUExecutionProvider if they're missing (no error, just slow) --

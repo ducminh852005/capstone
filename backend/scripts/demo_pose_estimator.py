@@ -1,11 +1,11 @@
-import os
 import sys
+
 import cv2
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import _common  # noqa: F401  (puts backend/ on sys.path)
 from core.pose_estimator import PoseEstimator, select_foot_point
 
-def test_mediapipe_pose(image_path):
+def run_mediapipe_pose(image_path):
     print(f"Loading image from {image_path}...")
     image = cv2.imread(image_path)
     if image is None:
@@ -52,7 +52,7 @@ def test_mediapipe_pose(image_path):
     if foot_point:
         print(f"SUCCESS: Estimated Foot Point at Global Coordinate: {foot_point} (source: {source})")
         cv2.circle(result_image, foot_point, radius=6, color=(0, 0, 255), thickness=-1)
-        cv2.putText(result_image, "Foot Point", (foot_point[0] + 10, foot_point[1] - 10), 
+        cv2.putText(result_image, "Foot Point", (foot_point[0] + 10, foot_point[1] - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
     else:
         print("WARNING: Could not detect feet in the selected area.")
@@ -67,7 +67,7 @@ def test_mediapipe_pose(image_path):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python test_pose_estimator.py <path_to_image>")
+        print("Usage: python demo_pose_estimator.py <path_to_image>")
         sys.exit(1)
-        
-    test_mediapipe_pose(sys.argv[1])
+
+    run_mediapipe_pose(sys.argv[1])

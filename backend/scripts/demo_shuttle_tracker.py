@@ -2,7 +2,7 @@
 Test raw shuttle tracking with side-by-side video and mask display.
 
 Usage:
-    python test_shuttle_tracker.py [video_path]
+    python scripts/demo_shuttle_tracker.py [video_path]
 
 Controls:
     q - Quit
@@ -11,11 +11,11 @@ import sys
 import cv2
 
 # Shared utilities (also sets up sys.path)
-from _common import create_detector, FPSCounter
+from _common import create_detector, setup_logging, FPSCounter, LiveTuner
 from core.config import DEFAULT_VIDEO
 
 
-def test_shuttle(video_path):
+def run_shuttle(video_path):
     print(f"Opening video: {video_path}")
     cap = cv2.VideoCapture(video_path)
 
@@ -25,6 +25,12 @@ def test_shuttle(video_path):
 
     detector = create_detector(backend="cv")
     fps_counter = FPSCounter()
+
+    tuner = LiveTuner("Tracker Tuner")
+    tuner.bind("Min Gate (px)", detector, "min_gate_px", 5.0, 200.0, 5.0)
+    tuner.bind("Max Track Len", detector, "max_track_len", 30, 400, 10)
+    tuner.bind("Max Speed Jump (x)", detector, "max_speed_ratio", 1.0, 10.0, 0.5)
+    tuner.bind("Min Cos Angle", detector, "min_cos_angle", -1.0, 1.0, 0.1)
 
     print("Starting shuttlecock tracking playback... Press 'q' to stop.")
 
@@ -52,6 +58,7 @@ def test_shuttle(video_path):
         combined = cv2.hconcat([annotated_resized, mask_resized])
 
         cv2.imshow("Left: Final Tracking | Right: CV2 Motion Mask", combined)
+        tuner.render()
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
@@ -60,5 +67,6 @@ def test_shuttle(video_path):
 
 
 if __name__ == "__main__":
+    setup_logging()
     target_video = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_VIDEO
-    test_shuttle(target_video)
+    run_shuttle(target_video)

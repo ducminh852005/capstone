@@ -1,6 +1,5 @@
 import cv2
 import logging
-import os
 from collections import deque
 from dataclasses import dataclass
 
@@ -168,9 +167,9 @@ class PlayerTracker:
              an approximate box, not a fresh one every frame.
         """
         if model_path is None:
-            model_path = os.path.join(os.path.dirname(__file__), "..", "models", "yolov8n.pt")
-        logger.info(f"Loading YOLO model from {model_path}...")
-        self.model = YOLO(model_path)
+            model_path = config.PLAYER_YOLO_MODEL_PATH
+        logger.info("Loading YOLO model from %s...", model_path)
+        self.model = YOLO(str(model_path))
         self.conf_thresh = conf_thresh
         self.tracker_config = "bytetrack.yaml"
         self.imgsz = imgsz

@@ -7,12 +7,17 @@ World frame (meters), following the technical guideline:
 Line coordinates are the CENTRE of each painted line (lines are ~4 cm wide).
 """
 import json
+import logging
 import os
 
 import cv2
 import numpy as np
 
-DEFAULT_CALIB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "calibration.json")
+from . import config
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_CALIB_PATH = config.CALIBRATION_PATH
 
 # Default values (standard badminton court dimensions in meters)
 COURT_LENGTH = 13.40
@@ -26,7 +31,9 @@ SIDELINE_SINGLES_Y = (0.46, 5.64)
 CENTER_Y = 3.05
 LINE_HALF_WIDTH = 0.02
 
-# Dynamically load from calibration.json if available
+# Court dimensions may be overridden by calibration.json. This is read ONCE at import because
+# the derived constants below (regions, calibration corners) are computed from them; it is
+# the only file access allowed at import time in core/.
 if os.path.exists(DEFAULT_CALIB_PATH):
     try:
         with open(DEFAULT_CALIB_PATH, "r", encoding="utf-8") as f:
@@ -45,10 +52,10 @@ if os.path.exists(DEFAULT_CALIB_PATH):
                     SIDELINE_SINGLES_Y = tuple(_cd["SIDELINE_SINGLES_Y"])
                 CENTER_Y = _cd.get("CENTER_Y", CENTER_Y)
                 LINE_HALF_WIDTH = _cd.get("LINE_HALF_WIDTH", LINE_HALF_WIDTH)
-    except Exception as e:
-        print(f"WARNING: Failed to parse court dimensions from {DEFAULT_CALIB_PATH}: {e}")
+    except (OSError, ValueError, TypeError, AttributeError) as e:
+        logger.warning("Failed to parse court dimensions from %s: %s", DEFAULT_CALIB_PATH, e)
 
-# Corners clicked in scripts/test_calibration.py: Bottom-Left, Bottom-Right, Net-Left, Net-Right
+# Corners clicked in scripts/calibrate_court.py: Bottom-Left, Bottom-Right, Net-Left, Net-Right
 CALIB_WORLD_POINTS = [
     (BASELINE_X, SIDELINE_DOUBLES_Y[0]),
     (BASELINE_X, SIDELINE_DOUBLES_Y[1]),

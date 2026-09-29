@@ -15,10 +15,12 @@ import sys
 import numpy as np
 import torch
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import _common  # noqa: F401  (puts backend/ on sys.path)
+from core import config
+from core.tracknet import load_checkpoint
 from core.tracknet_model import TrackNet, WIDTH, HEIGHT, in_dim_for
 
-DEFAULT_CKPT = os.path.join(os.path.dirname(__file__), "..", "models/TrackNet_best.pt")
+DEFAULT_CKPT = config.TRACKNET_WEIGHTS_PATH
 
 
 def main():
@@ -28,7 +30,7 @@ def main():
         print(f"ERROR: checkpoint not found at {ckpt_path}")
         sys.exit(1)
 
-    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    ckpt = load_checkpoint(ckpt_path)
     params = ckpt["param_dict"]
     seq_len = int(params["seq_len"])
     bg_mode = params["bg_mode"]

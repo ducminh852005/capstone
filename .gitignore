@@ -24,6 +24,13 @@ data/labels/*
 # Model weights too large for GitHub (100 MB limit) - download manually, see QUICK_START.md
 backend/models/
 
+# Generated artifacts
+backend/highlights.html
+backend/demo_trajectory.mp4
+data/highlights.html
+data/missed_bounces.txt
+.pytest_cache/
+
 # IDE
 .idea/
 .vscode/

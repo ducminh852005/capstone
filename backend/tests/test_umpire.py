@@ -162,3 +162,41 @@ def test_no_call_for_points_off_the_floor():
     pts = [(900, 60 + 30 * k) for k in range(8)] + [(900, 300)] * 4
     ump = RallyUmpire(H_INV, SINGLES, frame_size=(1080, 1920), net_top_y=None)
     assert feed(ump, pts) == []
+
+
+# --- perspective-corrected rest speed, defaults, metadata ---------------------------------
+
+def test_rest_speed_is_larger_near_the_camera():
+    umpire = RallyUmpire(H_INV, rest_speed_px=2.0)
+    near_cam, near_net = umpire._local_rest_speed(np.array([[900.0, 1000.0], [1000.0, 660.0]]))
+    assert near_cam > 2.0 > near_net > 0
+    # without a homography the threshold is constant
+    flat = RallyUmpire(None, rest_speed_px=2.0)._local_rest_speed(np.array([[900.0, 1000.0], [1000.0, 660.0]]))
+    assert flat.tolist() == [2.0, 2.0]
+
+
+def test_default_floor_region_covers_court_plus_buffer():
+    from core import config
+    x0, x1, y0, y1 = RallyUmpire(H_INV).floor_region
+    b = config.UMPIRE_FLOOR_BUFFER_M
+    assert (x0, y0) == (-b, -b)
+    assert x1 == court_model.COURT_LENGTH + b and y1 == court_model.COURT_WIDTH + b
+
+
+def test_landing_point_is_a_single_documented_method():
+    assert "first ground contact" in RallyUmpire.landing_point.__doc__
+
+
+def test_missing_metadata_falls_back_to_singles_with_warning(tmp_path, caplog):
+    from core.umpire import match_type_from_metadata
+    with caplog.at_level("WARNING", logger="core.umpire"):
+        assert match_type_from_metadata("nope.mp4", metadata_path=tmp_path / "missing.csv") == SINGLES
+    assert "assuming singles" in caplog.text
+
+
+def test_metadata_reads_doubles(tmp_path):
+    from core.umpire import match_type_from_metadata
+    csv_path = tmp_path / "metadata.csv"
+    csv_path.write_text("file,loai_tran\na.mp4,doi\nb.mp4,don\n", encoding="utf-8")
+    assert match_type_from_metadata("x/a.mp4", metadata_path=csv_path) == DOUBLES
+    assert match_type_from_metadata("x/b.mp4", metadata_path=csv_path) == SINGLES
