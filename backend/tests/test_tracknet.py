@@ -144,3 +144,66 @@ def test_tracknet_onnx_candidate_source_real_checkpoint_forward_pass():
         last_mask = mask
     assert src.ready()
     assert last_mask is not None
+
+
+# --- optimisations must not change what the network sees ----------------------------------------
+
+def test_prep_frame_resize_then_swap_equals_swap_then_resize():
+    import cv2
+    from core.tracknet import TrackNetCandidateSource
+
+    rng = np.random.default_rng(0)
+    crop = rng.integers(0, 256, (450, 800, 3), dtype=np.uint8)
+    old = cv2.resize(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB), (W, H), interpolation=cv2.INTER_LINEAR)
+    assert np.array_equal(TrackNetCandidateSource._prep_frame(crop), old)
+    view = rng.integers(0, 256, (900, 1600, 3), dtype=np.uint8)[100:600, 200:1100]      # non-contiguous ROI view
+    old = cv2.resize(cv2.cvtColor(view, cv2.COLOR_BGR2RGB), (W, H), interpolation=cv2.INTER_LINEAR)
+    assert np.array_equal(TrackNetCandidateSource._prep_frame(view), old)
+
+
+@pytest.mark.skipif(not os.path.exists(DEFAULT_WEIGHTS_PATH), reason="models/TrackNet_best.pt not downloaded")
+def test_gpu_side_conversion_is_bit_identical_to_the_numpy_one():
+    """The batch input built from uint8 on the device must equal numpy's astype(float32) / 255."""
+    import torch
+    from core.tracknet import TrackNetCandidateSource
+
+    src = TrackNetCandidateSource()
+    captured = {}
+
+    class Stub:
+        def __call__(self, x):
+            captured["x"] = x.detach().cpu()
+            return torch.zeros(1, src.seq_len, H, W, device=x.device)
+
+    src.model = Stub()
+    rng = np.random.default_rng(1)
+    for _ in range(src.seq_len):
+        src._window.append(rng.integers(0, 256, (H, W, 3), dtype=np.uint8))
+    src._bg_tensor = torch.zeros(3, H, W, device=src.device)
+    src._run_batch()
+
+    frames = np.stack(list(src._window), axis=0)
+    expected = (np.moveaxis(frames, -1, 1).astype(np.float32) / 255.0).reshape(-1, H, W)
+    got = captured["x"][0, 3:].numpy()          # skip the 3 background channels
+    assert got.dtype == np.float32 and np.array_equal(got, expected)
+
+
+@pytest.mark.skipif(not os.path.exists(DEFAULT_WEIGHTS_PATH), reason="models/TrackNet_best.pt not downloaded")
+def test_mask_is_cached_between_batches_and_refreshed_when_one_resolves():
+    from core.tracknet import TrackNetCandidateSource
+
+    src = TrackNetCandidateSource(batch_stride=4, bg_frames=2)
+    frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+    roi = (100, 50, 900, 500)
+    masks, resolved = [], []
+    for _ in range(40):
+        _, _, mask = src.generate(frame, roi)
+        masks.append(mask)
+        resolved.append(src._since_last_run == 0 and len(src._window) == src.seq_len)
+    # consecutive frames without a new batch share one array; a batch produces a new one
+    same = [masks[i] is masks[i - 1] for i in range(1, len(masks))]
+    assert any(same) and not all(same)
+    for i in range(1, len(masks)):
+        if resolved[i]:
+            assert masks[i] is not masks[i - 1]
+    assert all(m.shape == (roi[3] - roi[1], roi[2] - roi[0]) for m in masks)

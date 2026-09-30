@@ -54,6 +54,7 @@ def run_trajectory(video_path, backend=DEFAULT_BACKEND):
     bounce_events = []
     minimap = Minimap()
     fill_constraint = gap_fill.court_constraint(H_inv=H_inv, roi=roi)
+    filled = []
     paused = False
 
     for frame_idx, frame in reader:
@@ -76,8 +77,10 @@ def run_trajectory(video_path, backend=DEFAULT_BACKEND):
             print(f"Frame {frame_idx}: Processing... (no shuttle detected)")
 
         # --- Drawing ---
-        # estimates for the frames the detector could not see, recomputed over the visible tail
-        filled = detector.fill_gaps(allowed=fill_constraint, tail=config.TRAJECTORY_TAIL_LENGTH + 40)
+        # Estimates for the frames the detector could not see. They only change when a new
+        # detection arrives, so recompute then (a fit per gap costs ~1.5 ms every frame otherwise).
+        if pt is not None:
+            filled = detector.fill_gaps(allowed=fill_constraint, tail=config.TRAJECTORY_TAIL_LENGTH + 40)
         draw_shuttle_trajectory(frame, detector.trajectory, filled=filled)
         draw_bounce_markers(frame, bounce_events)
         draw_court_overlay(frame, H)
