@@ -1,19 +1,37 @@
 {
   "image_points": [
-    [326, 742],
-    [1000, 1032],
-    [1020, 652],
-    [1668, 734]
+    [
+      326,
+      742
+    ],
+    [
+      1000,
+      1029
+    ],
+    [
+      1020,
+      652
+    ],
+    [
+      1678,
+      730
+    ]
   ],
   "court_dimensions": {
-    "COURT_LENGTH": 13.40,
-    "COURT_WIDTH": 6.10,
-    "NET_X": 6.70,
+    "COURT_LENGTH": 13.4,
+    "COURT_WIDTH": 6.1,
+    "NET_X": 6.7,
     "BASELINE_X": 0.0,
     "LONG_SERVICE_DOUBLES_X": 0.76,
     "SHORT_SERVICE_X": 4.72,
-    "SIDELINE_DOUBLES_Y": [0.0, 6.10],
-    "SIDELINE_SINGLES_Y": [0.46, 5.64],
+    "SIDELINE_DOUBLES_Y": [
+      0.0,
+      6.1
+    ],
+    "SIDELINE_SINGLES_Y": [
+      0.46,
+      5.64
+    ],
     "CENTER_Y": 3.05,
     "LINE_HALF_WIDTH": 0.02
   }

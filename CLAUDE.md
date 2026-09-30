@@ -28,7 +28,7 @@ python scripts/calibrate_court.py --video ../data/cfr/tran04_cam1.mp4
 - `H`: world → image. `H_inv`: image → world. Không đổi chiều ngầm; đặt tên biến `*_px`, `*_m`, `img_*`, `world_*` để lộ hệ tọa độ.
 - **Hậu tố đơn vị bắt buộc**: `_px`, `_m`, `_s`, `_frames`. Tốc độ cầu: px/frame. Tốc độ người: m/s.
 - Video phải là **CFR 60 fps** (`process_all_videos.py`). Không đoán fps: lấy từ `ThreadedVideoReader.fps`; nếu bỏ frame (stride) thì truyền `fps / stride` cho `PlayerTracker`.
-- TrackNet chỉ ra candidate mỗi `batch_stride` frame (mặc định 8), các frame còn lại là mảng rỗng. Code tiêu thụ phải chịu được `None`/rỗng; `max_coast` và `min_gate_px` scale theo stride.
+- TrackNet chỉ ra candidate mỗi `batch_stride` frame (mặc định `config.TRACKNET_BATCH_STRIDE` = 5; 8 = không chồng lấn), các frame còn lại là mảng rỗng. Code tiêu thụ phải chịu được `None`/rỗng; `max_coast` và `min_gate_px` scale theo stride.
 - Calibration hiện chỉ khớp **nửa sân gần**; nửa xa được ngoại suy. `data/calibration.json` là một calibration toàn cục: đổi góc camera phải hiệu chỉnh lại.
 
 ## 3. Config & hằng số
@@ -79,8 +79,10 @@ python scripts/calibrate_court.py --video ../data/cfr/tran04_cam1.mp4
 - Đổi hành vi tracker/umpire/smash: chạy benchmark trước & sau và so sánh:
   ```bash
   python scripts/benchmark_pipeline.py <video> --frames 1800 --out ../data/benchmarks/<tên>.json
+  python scripts/eval_events.py <video> --tol 12 --out <tên>      # P/R của hit, smash, chạm đất so với nhãn
   ```
   Đọc `pct_frames_detected`, `n_runs`, `umpire_calls`. GPU laptop throttle: so sánh các lần chạy sát nhau.
+- `RallyUmpire.update` luôn nhận `flight_id=detector.flight_id`, `SmashDetector.update` nhận `detector.start_source`: một cú đánh khởi động lại track ngay trong một lần `detect()` nên `track_active` không hề đổi.
 - `LiveTuner` (`scripts/_common.py`): thuộc tính phải tồn tại (gõ sai → `AttributeError`) và code bị tune phải đọc giá trị lúc gọi.
 
 ## 9. Git & review
@@ -104,10 +106,13 @@ python scripts/calibrate_court.py --video ../data/cfr/tran04_cam1.mp4
 - `ShuttleDetector.__init__` có ~20 tham số; cần dataclass cấu hình khi chạm tới.
 - Chưa có type hint ở phần lớn API `core/` (chỉ code mới có).
 - Code vẽ trùng lặp: `_common.draw_shuttle_trajectory`/`Minimap` vs `ShuttleDetector.draw_trajectory` vs `CourtCalibrator.draw_court_frame`.
-- `generate_highlights.py` xếp hạng cú đánh theo vận tốc Kalman, tách biệt với `core/smash.py` (đo tốc độ từ 2 detection thật).
+- **Chưa có nhãn thật**: `data/events/tran04_cam1.events.json` là file mẫu rỗng; `PHYSICS_STOP_SPEED_PX`, `SMASH_SPEED_THRESHOLD`, `UMPIRE_MIN_DESCENT_PX` và luật chạm đất đều chưa được hiệu chỉnh bằng dữ liệu. Điền nhãn rồi chạy `scripts/eval_events.py`.
+- **Chạm đất vs hit**: cú nảy sau khi chạm sàn là đảo chiều vận tốc nên physics filter coi là ranh giới flight; umpire xử lý bằng cách xét flight cũ + vài điểm sau ranh giới (`_resolve_pending`). Cầu rơi trong đoạn không detect rồi xuất hiện nằm yên được call theo quy tắc `resting` (kém chính xác hơn `contact`). Các ngưỡng (`UMPIRE_REST_*`, `PHYSICS_STOP_SPEED_PX`) chưa hiệu chỉnh bằng nhãn; một số bounce vẫn bị bỏ sót khi cầu chỉ hiện ở vị trí nhiễu (di chuyển 2–4 px/frame do nhiễu TrackNet) hoặc không được detect.
+- Vùng sân xa rất thô (1 px ≈ 13 cm tại vạch cuối xa; nửa xa chỉ là ngoại suy homography): call ở nửa xa kém tin cậy; xem `Call.uncertainty_m`.
 - `MAX_COAST_CV = 8` là giá trị hiệu lực trước đây; bản WIP từng đặt 5 nhưng hằng số không được nối vào code. Nối hằng số làm đổi số liệu benchmark CV, nên giữ 8 — nếu muốn 5, đổi và benchmark lại.
 - `court_model.py` đọc `calibration.json` lúc import (ngoại lệ có ghi chú); tách thành loader lazy nếu cần nhiều calibration.
 - `backend/third_party/CourtKeyNet` là gitlink không có `.gitmodules` (clone mới sẽ thiếu nội dung).
 - `docs/Tối ưu hiệu năng pipeline – Nhật ký kỹ thuật.md` là nhật ký lịch sử, vẫn dùng tên script cũ (`test_*.py`).
 - `main.py`/`database.py` là scaffold, chưa nối với pipeline; `alembic`, `psycopg2-binary`, `pydantic-settings`, `python-multipart` chưa được import.
 - Calibration chỉ cho nửa sân gần; nửa xa ngoại suy.
+- `ShuttleDetector.fill_gaps()` (lấp frame không detect) mới dùng để vẽ; umpire/smash vẫn chỉ dùng detection thật. Homography chỉ mô tả mặt sàn nên không suy được độ cao cầu: ràng buộc sân chỉ loại điểm nằm dưới sàn hoặc ngoài ROI.

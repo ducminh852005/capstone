@@ -1,0 +1,16 @@
+{
+  "_readme": "Hand labels for scripts/eval_events.py. Frame numbers are absolute frame indexes of data/cfr/tran04_cam1.mp4 (60 fps). Keys starting with _ are ignored. Fill the three lists, then: python scripts/eval_events.py ../data/cfr/tran04_cam1.mp4",
+  "_hits": "frame the racket touches the shuttle. Detections come up to one TrackNet stride (8 frames) later, so +-12 frames are tolerated by default.",
+  "_smashes": "the hit frame of each smash (also list it under hits).",
+  "_landings": "first frame the shuttle touches the floor; 'call' is the true line call for that landing (IN, OUT) or null when unsure.",
+  "_example": {
+    "hits": [{"frame": 346}],
+    "smashes": [{"frame": 394, "note": "optional comment"}],
+    "landings": [{"frame": 1498, "call": "IN"}]
+  },
+  "video": "tran04_cam1.mp4",
+  "fps": 60,
+  "hits": [],
+  "smashes": [],
+  "landings": []
+}

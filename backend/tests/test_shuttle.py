@@ -169,7 +169,7 @@ def test_physics_does_nothing_for_slow_or_new_tracks():
     slow = _tracking_detector(speed=1.0)
     assert not slow._physics_reject(np.array([[100.0, 100.0]])).any()   # reversal ignored: too slow to read
     new = _tracking_detector()
-    new.track_len = 1
+    new.track_len = 0       # only the start point of the track has been seen: no direction yet
     assert not new._physics_reject(np.array([[100.0, 100.0]])).any()
 
 
@@ -187,3 +187,126 @@ def test_cv_coast_comes_from_config():
     from core import config
     assert ShuttleDetector(backend="cv").max_coast == config.MAX_COAST_CV
     assert ShuttleDetector(backend="cv", max_coast=3).max_coast == 3
+
+
+# --- flight bookkeeping: flight_id / start_source ---------------------------------------
+
+def _gen(cands, confs):
+    return lambda frame, roi: (np.array(cands, dtype=float), np.array(confs, dtype=float),
+                               np.zeros((4, 4), np.uint8))
+
+
+def _tracknet_like_detector(speed=10.0):
+    det = _tracking_detector(speed)
+    det.simple_init = True          # single-point restart, as for the tracknet backends
+    det.flight_id = 1
+    return det
+
+
+def test_hit_restarts_track_in_place_as_a_new_flight(monkeypatch):
+    det = _tracknet_like_detector()
+    monkeypatch.setattr(det._source, "generate", _gen([[110.0, 100.0]], [0.9]))   # reversal = hit
+    pt, _ = det.detect(np.zeros((10, 10, 3), np.uint8))
+    assert det.track_active and det.track_len == 0          # no edge in track_active...
+    assert det.flight_id == 2 and det.start_source == "physics"   # ...but a new flight
+    assert pt == (110, 100)
+
+
+def test_low_confidence_hit_candidate_still_restarts(monkeypatch):
+    det = _tracknet_like_detector()
+    conf = det.init_min_confidence - 0.05
+    assert 0.5 <= conf < det.init_min_confidence
+    monkeypatch.setattr(det._source, "generate", _gen([[110.0, 100.0]], [conf]))
+    det.detect(np.zeros((10, 10, 3), np.uint8))
+    assert det.flight_id == 2 and det.start_source == "physics"
+
+
+def test_restart_uses_the_candidate_that_broke_physics_not_the_most_confident(monkeypatch):
+    det = _tracknet_like_detector()
+    # (400, 400) is far outside the gate and most confident; (110, 100) is the hit
+    monkeypatch.setattr(det._source, "generate", _gen([[400.0, 400.0], [110.0, 100.0]], [0.99, 0.7]))
+    pt, _ = det.detect(np.zeros((10, 10, 3), np.uint8))
+    assert pt == (110, 100)
+
+
+def test_hit_candidate_on_player_body_still_restarts(monkeypatch):
+    det = _tracknet_like_detector()
+    monkeypatch.setattr(det._source, "generate", _gen([[110.0, 100.0]], [0.9]))
+    body = [(90, 0, 130, 130)]      # the candidate lies in the lower 2/3 of this box
+    pt, _ = det.detect(np.zeros((10, 10, 3), np.uint8), player_boxes=body)
+    assert pt == (110, 100) and det.start_source == "physics"
+
+
+def test_fresh_track_is_a_new_flight_not_a_hit(monkeypatch):
+    det = ShuttleDetector(backend="cv", simple_init=True)
+    assert det.flight_id == 0 and det.start_source is None
+    monkeypatch.setattr(det._source, "generate", _gen([[300.0, 300.0]], [0.9]))
+    det.detect(np.zeros((10, 10, 3), np.uint8))
+    assert det.track_active and det.flight_id == 1 and det.start_source == "new"
+
+
+def test_continued_flight_keeps_its_flight_id(monkeypatch):
+    det = _tracknet_like_detector()
+    monkeypatch.setattr(det._source, "generate", _gen([[130.0, 100.0]], [0.9]))   # keeps going
+    det.detect(np.zeros((10, 10, 3), np.uint8))
+    assert det.flight_id == 1 and det.track_len == 4
+
+
+def test_unphysical_distractor_does_not_break_a_track_that_has_a_good_candidate(monkeypatch):
+    det = _tracknet_like_detector()
+    # (130, 100) continues the flight; (110, 100) is inside the gate too but reverses direction
+    monkeypatch.setattr(det._source, "generate", _gen([[130.0, 100.0], [110.0, 100.0]], [0.6, 0.99]))
+    pt, _ = det.detect(np.zeros((10, 10, 3), np.uint8))
+    assert pt == (130, 100)
+    assert det.flight_id == 1 and det.track_len == 4       # same flight, no hit
+
+
+def test_shuttle_coming_to_rest_restarts_the_track_but_is_not_a_hit(monkeypatch):
+    det = _tracknet_like_detector()
+    # 20x deceleration to 0.5 px/frame: unphysical for the running track, but it is a stop
+    monkeypatch.setattr(det._source, "generate", _gen([[120.5, 100.0]], [0.9]))
+    pt, _ = det.detect(np.zeros((10, 10, 3), np.uint8))
+    assert pt == (120, 100) and det.track_active and det.track_len == 0
+    assert det.start_source == "stop"
+    assert det.flight_id == 1           # same flight: nothing new started
+
+
+# --- physics uses the measured velocity, not the Kalman one ---------------------------------
+
+def _falling_track_detector():
+    """
+    Track that measured a shuttle falling right/down, (100,100) at call 0 and (145,142) at call 8,
+    and has coasted 7 calls since: the next detection arrives 8 calls after the last one.
+    """
+    det = ShuttleDetector(backend="cv")
+    det.simple_init = True
+    det.kf.init((100.0, 100.0), (100.0, 100.0), (145.0, 142.0))
+    det.track_active, det.track_len, det.flight_id = True, 15, 1
+    det.trajectory = [(100, 100)] + [None] * 7 + [(145, 142)] + [None] * 7
+    return det
+
+
+def test_wrong_kalman_velocity_does_not_break_a_landing(monkeypatch):
+    det = _falling_track_detector()
+    det.kf.x[2:4] = (-14.0, -2.4)      # what the Kalman filter really reported on the footage: the wrong way
+    monkeypatch.setattr(det._source, "generate", _gen([[173.0, 164.0]], [0.9]))   # slower, same direction
+    pt, _ = det.detect(np.zeros((10, 10, 3), np.uint8))
+    assert pt == (173, 164) and det.flight_id == 1 and det.track_len == 16
+
+
+def test_direction_is_judged_against_the_last_two_detections(monkeypatch):
+    det = _falling_track_detector()
+    det.kf.x[2:4] = (5.0, 5.0)         # a Kalman velocity that would agree with the bad candidate
+    det.min_gate_px = 200.0            # wide enough (stride-scaled in real use) for the candidate to be in the gate
+    monkeypatch.setattr(det._source, "generate", _gen([[118.0, 118.0]], [0.9]))   # doubles back up-left
+    pt, _ = det.detect(np.zeros((10, 10, 3), np.uint8))
+    assert det.flight_id == 2 and det.start_source == "physics"
+
+
+def test_chord_velocity_ignores_points_of_earlier_tracks():
+    det = _falling_track_detector()
+    det.track_len = 0                  # the current track has only its start point in the trajectory
+    assert det._chord_velocity() is None
+    det.track_len = 15
+    v = det._chord_velocity()
+    assert v is not None and np.allclose(v, np.array([45.0, 42.0]) / 8.0)

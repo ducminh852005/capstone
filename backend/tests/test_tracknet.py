@@ -109,13 +109,18 @@ def test_tracknet_batch_stride_shorter_than_seq_len_runs_more_often():
                 n += 1
         return n
 
-    src_slow = TrackNetCandidateSource(batch_stride=None)  # nonoverlap, = seq_len
+    from core import config
+    src_default = TrackNetCandidateSource(batch_stride=None)      # config.TRACKNET_BATCH_STRIDE
+    assert src_default.batch_stride == config.TRACKNET_BATCH_STRIDE
+    src_slow = TrackNetCandidateSource(batch_stride=8)            # nonoverlap for the 8-frame checkpoint
+    assert src_slow.batch_stride == src_slow.seq_len
     resolved_slow = count_resolutions(src_slow)
     src_fast = TrackNetCandidateSource(batch_stride=2)
     resolved_fast = count_resolutions(src_fast)
+    resolved_default = count_resolutions(TrackNetCandidateSource(batch_stride=None))
 
-    assert src_fast.batch_stride == 2 and src_slow.batch_stride == src_slow.seq_len
-    assert resolved_fast > resolved_slow
+    assert src_fast.batch_stride == 2
+    assert resolved_fast > resolved_default > resolved_slow
 
 
 DEFAULT_ONNX_PATH = os.path.splitext(DEFAULT_WEIGHTS_PATH)[0] + ".onnx"

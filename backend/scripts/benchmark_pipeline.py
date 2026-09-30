@@ -149,7 +149,8 @@ def main():
                 umpire = RallyUmpire(H_inv, match_type=match_type, frame_size=frame.shape[:2], roi=roi,
                                      net_top_y=court_model.net_top_threshold_y(H))
             c = umpire.update(idx, pt, detector.track_active,
-                              people_boxes=list(tracker.last_boxes) if tracker is not None else None)
+                              people_boxes=list(tracker.last_boxes) if tracker is not None else None,
+                              flight_id=detector.flight_id)
             if c is not None:
                 calls.append(c.to_dict())
             if timer.enabled:

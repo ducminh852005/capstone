@@ -77,6 +77,12 @@ MAX_COAST_CV = 8
 CV backend sees every frame, so a short coast is fine; TrackNet's batched
 inference skips frames, so it needs more headroom (see TRACKNET_MIN_COAST)."""
 
+TRACKNET_BATCH_STRIDE = 5
+"""New frames between two TrackNet forward passes, i.e. one shuttle detection every this many
+frames (the model always sees a full seq_len = 8 frame window). Smaller = finer detection
+resolution but proportionally more GPU work (each pass costs ~100 ms on the reference GPU):
+5 means 1.6x the passes of the 8-frame (non-overlapping) mode. 0/None = seq_len."""
+
 TRACKNET_MIN_COAST = 12
 """Minimum coast (frames) for TrackNet backends."""
 
@@ -106,6 +112,11 @@ very next batch (stride frames later) when a track starts from a single point.""
 PHYSICS_MIN_SPEED_PX = 2.0
 """Physics filter only runs when the current track speed (px/frame) exceeds this;
 below it the direction/speed of the track is not reliable."""
+
+PHYSICS_STOP_SPEED_PX = 2.0
+"""When the physics filter breaks a track and the shuttle leaves the break slower than this
+(px/frame), it came to rest (landed or resting on the floor): the track restarts but it is
+not a racket hit and not a new flight."""
 
 PHYSICS_MAX_DECEL_RATIO = 10.0
 """Reject a candidate if it would slow the shuttle by more than this factor.
@@ -185,6 +196,34 @@ SHUTTLE_FIT_WINDOW = 8
 SHUTTLE_MAX_FIT_RMS_PX = 4.0
 """If the parabola residual exceeds this, fall back to linear interpolation."""
 
+# --- Gap filling between detections (core/gap_fill.py) ---
+SHUTTLE_FILL_LINK_STRIDES = 1.5
+"""Two detections belong to the same chain when they are at most this many detection
+strides apart (stride = TrackNet batch_stride, 1 for the CV backend)."""
+
+SHUTTLE_FILL_MIN_CHAIN_LEN = 2
+"""A chain must hold at least this many detections on both sides of a gap for the gap to
+be bridged: fewer cannot tell which way the shuttle was flying."""
+
+SHUTTLE_FILL_MAX_GAP_FRAMES = 48
+"""Longest gap (frames) bridged between two chains (48 = 6 TrackNet strides)."""
+
+SHUTTLE_FILL_STRIDE_FIT_POINTS = 2
+"""Detections taken from each side of a gap inside a chain for the inertia + gravity fit.
+On real footage (leave-one-out on tran04) 2 per side predicts a held-out detection to a median
+of 4.5 px; a wider window spans several flights and stops fitting one parabola."""
+
+SHUTTLE_FILL_BRIDGE_FIT_POINTS = 3
+"""Detections taken from each side of a gap between two chains (fewer if the chain is shorter)."""
+
+SHUTTLE_FILL_MAX_RMS_PX = 6.0
+"""A gap is only filled when one parabola (constant acceleration) explains the detections
+on both sides this well (px RMS). A racket hit inside the gap breaks the fit."""
+
+SHUTTLE_FILL_TRUSTED_GAP_FRAMES = 32
+"""Prediction error grows with the gap (median 4 px over 16 frames, 8 px over 24, p90 ~90 px
+over 32). Beyond this many frames the RMS limit shrinks in proportion to the gap."""
+
 
 # =====================================================================
 #  LANDING / UMPIRE  (umpire.py)
@@ -197,6 +236,26 @@ frame rather than landing."""
 UMPIRE_REST_SPEED_PX = 2.0
 """A shuttle moving slower than this for rest_frames consecutive frames is
 considered to have come to rest (confirming a landing)."""
+
+UMPIRE_REST_SPEED_FLOOR_PX = 1.5
+"""Lower bound (px/frame) of the perspective-scaled rest speed. Far from the camera the scaled
+threshold drops below 1 px/frame, which is under TrackNet's own localisation noise (a few px
+between detections a stride apart), so a resting shuttle would never look at rest."""
+
+UMPIRE_ALLOW_RESTING = True
+"""Call a landing when a shuttle that was falling is lost and then reappears lying still on
+the floor (Call.method == "resting"): the impact itself was not seen, the call uses the first
+resting position. Set False to only call impacts that were seen."""
+
+UMPIRE_REST_RUN_POINTS = 3
+"""Consecutive detections that must be still to count as lying on the floor."""
+
+UMPIRE_REST_MAX_GAP_FRAMES = 90
+"""The resting shuttle must reappear within this many frames of the last falling detection."""
+
+UMPIRE_REST_Y_SLACK_PX = 20
+"""A shuttle that fell cannot come to rest more than this many px HIGHER in the image than
+where it was last seen falling."""
 
 UMPIRE_REST_FRAMES = 2
 """How many consecutive slow frames confirm a landing."""
@@ -211,11 +270,6 @@ UMPIRE_MIN_DESCENT_PX = 80
 """Minimum vertical descent (px) from the flight's apex before looking for
 an impact — prevents false positives from gentle tosses."""
 
-UMPIRE_BOUNCE_DECEL_RATIO = 0.4
-"""Impact is detected when vertical speed drops to this fraction of the peak
-fall speed (a real bounce loses most of its speed; a smooth deceleration
-approaching the top of an arc does not)."""
-
 UMPIRE_SETTLE_SEARCH_FRAMES = 30
 """Frames after a candidate impact to look for the shuttle calming down."""
 
@@ -227,6 +281,12 @@ itself is built from the court dimensions in umpire.default_floor_region()."""
 UMPIRE_PERSPECTIVE_PROBE_PX = 10
 """Vertical image offset (px) used to measure the local metres-per-pixel scale
 when converting the rest-speed threshold to perspective-corrected values."""
+
+UMPIRE_ALLOW_EXTRAPOLATION = False
+"""Call a landing for a flight that ends while the shuttle is still falling, by
+extrapolating its last velocity (Call.method == "lost"). Off: a shuttle in the air does
+not map to a floor point, and on real footage the extrapolation only ever ran to the edge
+of the accepted floor region, producing spurious OUT calls."""
 
 UMPIRE_EXTRAPOLATE_MAX_FRAMES = 30
 """When a falling shuttle is lost before touching the floor, extrapolate its
@@ -301,9 +361,14 @@ TRAJECTORY_SMOOTH_POLYORDER = 2
 
 SMASH_SPEED_THRESHOLD = 12.0
 """Minimum speed (px/frame) to classify a hit as a smash.
-With TrackNet's default stride of 8, the two detection points used to
-measure speed are ~8 frames apart, so the per-frame speed is the
-displacement / 8. A real smash covers ~100+ px in 8 frames = ~12+ px/frame."""
+The two detection points used to measure speed are one TrackNet stride
+(TRACKNET_BATCH_STRIDE) apart, so the per-frame speed is the displacement
+divided by that. A real smash covers ~12+ px/frame (~100 px in 8 frames)."""
+
+SMASH_REQUIRE_PHYSICS_HIT = True
+"""Only a track that restarted because the physics filter broke the previous one (a racket
+hit) can be a smash. A track that starts from nothing is measured but not counted: it may be
+a shuttle first seen while falling fast (not a hit)."""
 
 SMASH_MIN_Y = 50.0
 """Ignore hits whose image y (px) is above this: the shuttle is out of the play area."""

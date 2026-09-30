@@ -2,11 +2,10 @@ import os
 import sys
 import time
 
-import numpy as np
-
 from _common import create_detector, setup_logging
 from core import config, court_model
 from core.player_tracker import PlayerTracker
+from core.smash import SmashDetector
 from core.umpire import RallyUmpire, match_type_from_metadata
 from core.video_io import ThreadedVideoReader
 
@@ -39,7 +38,8 @@ def generate_highlights(video_path, shuttle_backend=config.DEFAULT_BACKEND, outp
     current_rally_start_time = 0.0
     current_rally_hits = 0
 
-    was_active = False
+    smash = SmashDetector()
+    hit_flight_id = None    # last flight_id seen, to count a new flight started by a hit
 
     print("Processing video to extract highlights... (this may take a while depending on video length)")
     start_time = time.time()
@@ -53,26 +53,26 @@ def generate_highlights(video_path, shuttle_backend=config.DEFAULT_BACKEND, outp
                                           exclude_boxes=tracker.non_player_boxes(players),
                                           player_boxes=[p.bbox for p in players.values()])
 
-        if not was_active and detector.track_active:
-            # A new track just started (a hit occurred)
-            current_rally_hits += 1
+        if detector.track_active and detector.track_len == 0 and detector.flight_id != hit_flight_id:
+            hit_flight_id = detector.flight_id
+            if detector.start_source == "physics":
+                current_rally_hits += 1     # the shuttle was hit (a new track from nothing is not a hit)
 
-            # Check if this hit is a potential smash from the near side
-            vx, vy = detector.kf.x[2:4]
-            speed = np.hypot(vx, vy)
-            start_pt = detector.kf.x[:2]
-
-            world_pt = court_model.img_to_world([start_pt], H_inv)[0]
-            is_near = world_pt[0] < court_model.NET_X
-
-            if is_near:
+        # The speed after a hit is measured on the first two real detections of the new track
+        # (right after the restart the Kalman velocity is still zero).
+        measured = smash.update(frame_idx, pt, detector.track_active, detector.track_len,
+                                detector.kf.x[:2], detector.start_source)
+        if measured is not None and measured.source == "physics":
+            world_pt = court_model.img_to_world([measured.pt], H_inv)[0]
+            if world_pt[0] < court_model.NET_X:      # near half-court
                 near_hits.append({
-                    'frame': frame_idx,
-                    'time': frame_idx / fps,
-                    'speed': float(speed)
+                    'frame': measured.frame_idx,
+                    'time': measured.frame_idx / fps,
+                    'speed': measured.speed
                 })
 
-        call = umpire.update(frame_idx, pt, detector.track_active, people_boxes=list(tracker.last_boxes))
+        call = umpire.update(frame_idx, pt, detector.track_active, people_boxes=list(tracker.last_boxes),
+                             flight_id=detector.flight_id)
         if call is not None:
             # Rally ended
             rallies.append({
@@ -88,8 +88,6 @@ def generate_highlights(video_path, shuttle_backend=config.DEFAULT_BACKEND, outp
             current_rally_start_frame = frame_idx
             current_rally_start_time = frame_idx / fps
             current_rally_hits = 0
-
-        was_active = detector.track_active
 
     reader.release()
     print(f"Processing complete in {time.time() - start_time:.2f} seconds.")

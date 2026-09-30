@@ -93,23 +93,35 @@ class FPSCounter:
 
 # ========================= Drawing Helpers ============================
 
-def draw_shuttle_trajectory(frame, trajectory, tail_length=None):
+def draw_shuttle_trajectory(frame, trajectory, tail_length=None, filled=None):
     """
     Draw the shuttle's recent flight path as a gradient-colored tail.
     Draws in-place on `frame` (no copy). tail_length defaults to config.TRAJECTORY_TAIL_LENGTH,
     read at call time so a live tuner can change it.
+
+    filled: gap_fill.FilledPoint estimates for frames without a detection (from
+    ShuttleDetector.fill_gaps()). They join the tail; segments that touch an estimate are drawn
+    in a cooler color, so measured and inferred path can be told apart.
     """
     if tail_length is None:
         tail_length = config.TRAJECTORY_TAIL_LENGTH
-    recent = [p for p in trajectory[-tail_length:] if p is not None]
+    estimates = {p.frame_idx: p.pt for p in (filled or [])}
+    first = max(0, len(trajectory) - tail_length)
+    recent = []                                   # (point, is_estimate), oldest first
+    for i in range(first, len(trajectory)):
+        if trajectory[i] is not None:
+            recent.append((trajectory[i], False))
+        elif i in estimates:
+            recent.append(((int(round(estimates[i][0])), int(round(estimates[i][1]))), True))
     if not recent:
         return
     for i in range(1, len(recent)):
         t = i / len(recent)  # 0..1, older to newer
-        color = (0, int(80 + 175 * t), 255)
-        thickness = int(1 + 3 * t)
-        cv2.line(frame, recent[i - 1], recent[i], color, thickness)
-    cv2.circle(frame, recent[-1], 6, (0, 0, 255), -1)
+        (p0, e0), (p1, e1) = recent[i - 1], recent[i]
+        color = (255, int(120 + 100 * t), 0) if (e0 or e1) else (0, int(80 + 175 * t), 255)
+        cv2.line(frame, p0, p1, color, int(1 + 3 * t))
+    if not recent[-1][1]:
+        cv2.circle(frame, recent[-1][0], 6, (0, 0, 255), -1)
 
 
 def draw_court_overlay(frame, H):

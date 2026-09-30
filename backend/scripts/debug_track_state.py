@@ -28,13 +28,14 @@ def main():
         if frame_idx > args.end:
             break
         pt, _ = detector.detect(frame, roi=roi)
-        hit = smash.update(frame_idx, pt, detector.track_active, detector.track_len, detector.kf.x[:2])
+        hit = smash.update(frame_idx, pt, detector.track_active, detector.track_len, detector.kf.x[:2],
+                           detector.start_source)
         if hit is not None:
-            print(f"Hit at frame {hit.frame_idx}: speed={hit.speed:.1f} angle={hit.angle_deg:.1f} "
-                  f"y={hit.pt[1]} smash={hit.is_smash}")
+            print(f"Track start at frame {hit.frame_idx} ({hit.source}): speed={hit.speed:.1f} "
+                  f"over {hit.dt_frames} frames, angle={hit.angle_deg:.1f} y={hit.pt[1]} smash={hit.is_smash}")
         if frame_idx >= args.start:
             n_cands = len(detector._recent_candidates[-1]) if detector._recent_candidates else 0
-            print(f"Frame {frame_idx:4}: pt={pt} active={detector.track_active} "
+            print(f"Frame {frame_idx:4}: pt={pt} active={detector.track_active} flight={detector.flight_id} "
                   f"len={detector.track_len} misses={detector.misses} cands={n_cands}")
     reader.release()
 

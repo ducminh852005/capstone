@@ -48,10 +48,11 @@ def run_smash_detection(video_path, backend=config.DEFAULT_BACKEND):
     for frame_idx, frame in reader:
         pt, _ = detector.detect(frame, roi=roi)
 
-        hit = smash.update(frame_idx, pt, detector.track_active, detector.track_len, detector.kf.x[:2])
+        hit = smash.update(frame_idx, pt, detector.track_active, detector.track_len, detector.kf.x[:2],
+                           detector.start_source)
         if hit is not None:
-            print(f"[DEBUG] Frame {hit.frame_idx}: Track restarted "
-                  f"(Speed={hit.speed:.1f}, Angle={hit.angle_deg:.1f} deg, Y={hit.pt[1]})")
+            print(f"[DEBUG] Frame {hit.frame_idx}: Track started by {hit.source} "
+                  f"(Speed={hit.speed:.1f} over {hit.dt_frames} frames, Angle={hit.angle_deg:.1f} deg, Y={hit.pt[1]})")
             if hit.is_smash:
                 print(f"\n[SMASH #{hit.smash_number} DETECTED] Frame {hit.frame_idx}: "
                       f"Speed = {hit.speed:.1f} px/frame")

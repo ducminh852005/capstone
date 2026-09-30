@@ -4,7 +4,7 @@ import numpy as np
 import logging
 
 from .tracknet import TrackNetCandidateSource
-from . import config
+from . import config, gap_fill
 
 logger = logging.getLogger(__name__)
 
@@ -308,8 +308,11 @@ class ShuttleDetector:
         self.track_active = False
         self.misses = 0
         self.track_len = 0
+        self.flight_id = 0             # +1 every time a track starts, including restarts at a hit
+        self.start_source = None       # "physics" | "new": how the current track started
         self._recent_candidates = []   # candidate arrays of the last 2 frames, for track initiation
         self.trajectory = []           # one (x, y) or None per detect() call, full-frame pixels
+        self.trajectory_meta = []      # parallel: (flight_id, start_source if a track started there) or (None, None)
         self.last_roi = None
 
     def _tracknet_coast(self):
@@ -332,6 +335,36 @@ class ShuttleDetector:
                 return np.array(self.trajectory[-k]), k
         return None, 0
 
+    def _break_source(self, restart_pt):
+        """
+        "physics" if the shuttle leaves a physics break at a speed of a hit, "stop" if it has
+        come to rest (a landing, or a resting shuttle jittering on the floor): that is no racket
+        hit, so it must not count as one nor end the flight.
+        """
+        last_pt, dt = self._last_valid_point()
+        if last_pt is not None and np.linalg.norm(np.asarray(restart_pt) - last_pt) / dt <= config.PHYSICS_STOP_SPEED_PX:
+            return "stop"
+        return "physics"
+
+    def _chord_velocity(self):
+        """
+        Velocity (px/frame) between the two most recent detections of the CURRENT track, or None
+        if it has fewer than two. Measured, not filtered: with detections a TrackNet stride apart
+        the Kalman velocity is unreliable (its acceleration state soaks up the position
+        innovation; on real footage it pointed the wrong way on a shuttle falling to the floor).
+        """
+        first = max(0, len(self.trajectory) - 1 - self.track_len)   # index of the call that started this track
+        seen = []
+        for i in range(len(self.trajectory) - 1, first - 1, -1):
+            if self.trajectory[i] is not None:
+                seen.append(i)
+                if len(seen) == 2:
+                    break
+        if len(seen) < 2:
+            return None
+        i1, i0 = seen
+        return (np.array(self.trajectory[i1], dtype=float) - np.array(self.trajectory[i0], dtype=float)) / (i1 - i0)
+
     def _physics_reject(self, cands):
         """
         Boolean mask of candidates that one continuous flight cannot explain.
@@ -339,14 +372,16 @@ class ShuttleDetector:
         Air drag can slow a shuttle 3-4x within one batch, but a real hit typically
         ACCELERATES it or turns it sharply. So a candidate is rejected when it would speed
         the shuttle up by more than max_speed_ratio, slow it by more than
-        PHYSICS_MAX_DECEL_RATIO, or turn it by more than acos(min_cos_angle). Nothing is
-        rejected while the track is too new or too slow to read a direction from.
+        PHYSICS_MAX_DECEL_RATIO, or turn it by more than acos(min_cos_angle), all measured
+        against the velocity between the last two detections (_chord_velocity). Nothing is
+        rejected while the track has fewer than two detections or is too slow to read a
+        direction from.
         """
         reject = np.zeros(len(cands), dtype=bool)
         last_pt, dt = self._last_valid_point()
-        if self.track_len < 2 or last_pt is None:
+        v_before = self._chord_velocity()
+        if v_before is None or last_pt is None:
             return reject
-        v_before = self.kf.x[2:4]
         speed_before = np.linalg.norm(v_before)
         if speed_before <= config.PHYSICS_MIN_SPEED_PX:
             return reject
@@ -408,6 +443,16 @@ class ShuttleDetector:
                       min_body_speed px/frame (keeps the shuttle at the moment of a hit).
         Returns (point or None, a mask sized to the ROI for display -- the foreground mask
         for backend="cv", the most recently resolved heatmap for backend="tracknet").
+
+        Flight bookkeeping for consumers: `flight_id` increases every time a flight starts,
+        including a restart in the same call that ended the previous track (a racket hit), where
+        `track_active` stays True and so shows no edge. On the call that starts a track,
+        `track_len == 0` and `start_source` is
+          "physics": the previous track was broken by the physics filter on this very call and
+                     the shuttle left it at speed (a racket hit);
+          "stop":    same, but the shuttle came to rest (landed / resting on the floor): the
+                     track restarts but it is the same flight, `flight_id` does not change;
+          "new":     nothing to continue.
         """
         self.last_roi = roi
         cands, confs, mask = self._source.generate(frame, roi)
@@ -425,6 +470,8 @@ class ShuttleDetector:
             on_body = self._in_boxes(cands, player_boxes, top_frac=config.BODY_TOP_FRAC)
 
         best_pt = None
+        hit_start = None    # candidate that broke the physics filter on this call: the shuttle after a hit
+        break_source = None
         if self.track_active:
             self.kf.predict()
             if len(cands):
@@ -437,10 +484,15 @@ class ShuttleDetector:
 
                 physics_reject = self._physics_reject(cands)
                 # A candidate close enough to be the shuttle but breaking the laws of physics
-                # means the shuttle was hit: end the track so a new one can start.
-                if (in_gate & physics_reject).any():
-                    self.track_active = False
+                # means the shuttle was hit: end the track so a new one can start. Only when no
+                # candidate fits the flight, though: with one that does, the unphysical blob is
+                # a distractor (a shoe, a racket frame) and the track goes on with the good one.
+                broke_physics = in_gate & physics_reject
                 in_gate &= ~physics_reject
+                if broke_physics.any() and not in_gate.any():
+                    self.track_active = False
+                    hit_start = cands[int(np.argmax(np.where(broke_physics, confs, -np.inf)))]
+                    break_source = self._break_source(hit_start)
 
                 if self.track_active and in_gate.any():
                     i = int(np.argmin(np.where(in_gate, d2, np.inf)))
@@ -455,11 +507,25 @@ class ShuttleDetector:
 
         cands, confs = cands[~on_body], confs[~on_body]
         if not self.track_active:
-            triple = self._try_init_simple(cands, confs) if self.simple_init else self._try_init(cands)
+            source = "new"
+            if hit_start is not None and self.simple_init:
+                # Restart at the hit itself. That candidate already passed the detection
+                # threshold and lies inside the old track's gate, so it is trusted without
+                # the stricter init_min_confidence, and even when it is on a player's body.
+                triple, source = (hit_start, hit_start, hit_start), break_source
+            elif self.simple_init:
+                triple = self._try_init_simple(cands, confs)
+            else:
+                triple = self._try_init(cands)
+                if triple is not None and hit_start is not None:
+                    source = break_source
             if triple is not None:
                 c1, c2, c3 = triple
                 self.kf.init(c1, c2, c3)
                 self.track_active = True
+                if source != "stop":
+                    self.flight_id += 1     # a shuttle coming to rest continues the same flight
+                self.start_source = source
                 self.misses = 0
                 self.track_len = 0
                 best_pt = (int(round(c3[0])), int(round(c3[1])))
@@ -472,7 +538,27 @@ class ShuttleDetector:
 
         self._recent_candidates = (self._recent_candidates + [cands])[-2:]
         self.trajectory.append(best_pt)
+        self.trajectory_meta.append((self.flight_id, self.start_source if self.track_len == 0 else None)
+                                    if best_pt is not None else (None, None))
         return best_pt, mask
+
+    def fill_gaps(self, allowed=None, tail=None):
+        """
+        Estimated positions for the frames without a detection, between detections (see
+        core/gap_fill.py). Returns [gap_fill.FilledPoint]; frame_idx is the index into
+        `trajectory`, i.e. the detect() call number (the video frame when detect() is called
+        on every frame from frame 0).
+
+        allowed: plausibility check for a filled image point (gap_fill.court_constraint(...)).
+        tail: only look at the last `tail` calls (cheap enough to recompute every frame for
+              drawing); None = the whole trajectory.
+        """
+        start = 0 if tail is None else max(0, len(self.trajectory) - tail)
+        dets = [gap_fill.Detection(i, self.trajectory[i], *self.trajectory_meta[i])
+                for i in range(start, len(self.trajectory)) if self.trajectory[i] is not None]
+        stride = getattr(self._source, "batch_stride", 1)
+        link = max(2, int(round(config.SHUTTLE_FILL_LINK_STRIDES * stride)))
+        return gap_fill.fill_gaps(dets, allowed=allowed, max_link_frames=link)
 
     def draw_trajectory(self, frame, tail_length=20):
         """Trailing path of the shuttle: older segments thin and dark, newer ones thick and bright."""

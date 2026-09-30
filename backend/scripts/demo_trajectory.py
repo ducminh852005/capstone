@@ -19,7 +19,7 @@ from _common import (
     draw_shuttle_trajectory, draw_court_overlay, draw_bounce_markers, Minimap,
     LiveTuner,
 )
-from core import config, court_model
+from core import config, court_model, gap_fill
 from core.config import DISPLAY_SIZE, DEFAULT_VIDEO, DEFAULT_BACKEND
 from core.umpire import RallyUmpire, match_type_from_metadata
 
@@ -53,6 +53,7 @@ def run_trajectory(video_path, backend=DEFAULT_BACKEND):
 
     bounce_events = []
     minimap = Minimap()
+    fill_constraint = gap_fill.court_constraint(H_inv=H_inv, roi=roi)
     paused = False
 
     for frame_idx, frame in reader:
@@ -60,12 +61,13 @@ def run_trajectory(video_path, backend=DEFAULT_BACKEND):
 
         # Umpire tracks landings
         if umpire is not None:
-            call = umpire.update(frame_idx, pt, detector.track_active)
+            call = umpire.update(frame_idx, pt, detector.track_active, flight_id=detector.flight_id)
             if call is not None:
                 bounce_events.append(call)
                 print(f"\n[LANDING] Frame {call.frame_idx}: "
                       f"image {call.image_pt}, court (m) {call.world_pt}")
-                print(f"Result: {call.result} (Half: {call.half}, Margin: {call.margin_m:.3f}m)\n")
+                print(f"Result: {call.result} (Half: {call.half}, Margin: {call.margin_m:.3f}m, "
+                      f"1 px = {call.uncertainty_m:.3f}m, method: {call.method})\n")
 
         # Terminal log
         if pt is not None:
@@ -74,7 +76,9 @@ def run_trajectory(video_path, backend=DEFAULT_BACKEND):
             print(f"Frame {frame_idx}: Processing... (no shuttle detected)")
 
         # --- Drawing ---
-        draw_shuttle_trajectory(frame, detector.trajectory)
+        # estimates for the frames the detector could not see, recomputed over the visible tail
+        filled = detector.fill_gaps(allowed=fill_constraint, tail=config.TRAJECTORY_TAIL_LENGTH + 40)
+        draw_shuttle_trajectory(frame, detector.trajectory, filled=filled)
         draw_bounce_markers(frame, bounce_events)
         draw_court_overlay(frame, H)
 

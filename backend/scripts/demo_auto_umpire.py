@@ -75,7 +75,8 @@ def run_auto_umpire(video_path, shuttle_backend=DEFAULT_BACKEND):
         fg_mask = np.zeros((h, w), dtype=np.uint8)
         fg_mask[y0:y1, x0:x1] = fg_mask_roi
 
-        call = umpire.update(frame_idx, pt, detector.track_active, people_boxes=list(tracker.last_boxes))
+        call = umpire.update(frame_idx, pt, detector.track_active, people_boxes=list(tracker.last_boxes),
+                             flight_id=detector.flight_id)
         if call is not None:
             last_landing_pt = call.image_pt
             hitter = "far" if call.half == "near" else "near"
@@ -86,7 +87,8 @@ def run_auto_umpire(video_path, shuttle_backend=DEFAULT_BACKEND):
             else:
                 score_near += 1
                 alert_color = (0, 0, 255)
-            alert_text = f"{call.half.upper()} {call.result}{' (close)' if call.close_call else ''} {call.margin_m:+.2f} m"
+            alert_text = (f"{call.half.upper()} {call.result}{' (close)' if call.close_call else ''} "
+                          f"{call.margin_m:+.2f} m [{call.method}]")
             print(f"frame {frame_idx}: {call.to_dict()}")
             show_alert_until = UMPIRE_ALERT_FRAMES
 

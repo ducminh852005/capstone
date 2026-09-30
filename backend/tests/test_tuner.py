@@ -62,3 +62,16 @@ def test_trajectory_tail_length_read_at_call_time(monkeypatch):
     long = frame.copy()
     draw_shuttle_trajectory(long, traj)
     assert (long > 0).sum() > (short > 0).sum()
+
+
+def test_estimated_points_are_drawn_in_a_different_color():
+    from core.gap_fill import FilledPoint
+    frame = np.zeros((60, 60, 3), np.uint8)
+    traj = [(10, 10), None, None, (40, 10)]           # a gap between two detections
+    est = [FilledPoint(1, (20.0, 10.0), "stride"), FilledPoint(2, (30.0, 10.0), "stride")]
+    draw_shuttle_trajectory(frame, traj, tail_length=10, filled=est)
+    on_gap = frame[10, 25]                             # midpoint of the estimated segment
+    assert on_gap[0] == 255                            # estimate color has blue = 255 (BGR)
+    plain = np.zeros_like(frame)
+    draw_shuttle_trajectory(plain, traj, tail_length=10)
+    assert plain[10, 25][0] == 0 and plain[10, 25].any()   # measured color, a straight line over the gap

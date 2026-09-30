@@ -124,10 +124,10 @@ class TrackNetCandidateSource:
                  use_half=False):
         """
         weights_path: path to TrackNet_best.pt (see QUICK_START.md for the download step).
-        batch_stride: how many new frames arrive between forward passes; None = seq_len
-                      from the checkpoint (nonoverlap batching -- the fast default, but
-                      only 1-in-seq_len frames get a detection, which is too coarse for
-                      RallyUmpire's landing-rest detection). The model always sees a full
+        batch_stride: how many new frames arrive between forward passes; None =
+                      config.TRACKNET_BATCH_STRIDE (5), or seq_len from the checkpoint if that
+                      is 0 (nonoverlap batching -- the fastest, but only 1-in-seq_len frames get
+                      a detection, which is too coarse for RallyUmpire's landing detection). The model always sees a full
                       sliding window of the last seq_len frames regardless of stride, so a
                       smaller stride (e.g. 2-4) trades GPU cost for temporal resolution
                       without changing per-batch cost; batch_stride=1 is the fully dense,
@@ -166,7 +166,7 @@ class TrackNetCandidateSource:
 
     def _init_state(self, batch_stride, conf_threshold, bg_frames):
         """Runtime-independent state; needs self.seq_len and self.bg_mode to be set already."""
-        self.batch_stride = batch_stride or self.seq_len
+        self.batch_stride = batch_stride or config.TRACKNET_BATCH_STRIDE or self.seq_len
         self.conf_threshold = conf_threshold
         self.needs_bg = bool(self.bg_mode)
         self.bg_frames_needed = bg_frames

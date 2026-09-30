@@ -111,9 +111,21 @@ def test_landing_in_doubles_alley_is_out_for_singles():
 
 
 def test_no_call_without_rest():
-    calls = feed(make_umpire(), flight_to((3.0, 3.0), rest_frames=0))
-    # With extrapolation logic, a track ending in a steep dive is extrapolated to the floor.
-    assert len(calls) == 1
+    # the track ends in a steep dive with no impact: nothing to judge by default
+    assert feed(make_umpire(), flight_to((3.0, 3.0), rest_frames=0)) == []
+
+
+def test_extrapolated_call_only_when_enabled_and_flagged_lost():
+    ump = RallyUmpire(H_INV, SINGLES, frame_size=(1080, 1920), net_top_y=court_model.net_top_threshold_y(H),
+                      allow_extrapolation=True)
+    calls = feed(ump, flight_to((3.0, 3.0), rest_frames=0))
+    assert len(calls) == 1 and calls[0].method == "lost"
+
+
+def test_extrapolation_is_off_by_default():
+    from core import config
+    assert config.UMPIRE_ALLOW_EXTRAPOLATION is False
+    assert make_umpire().allow_extrapolation is False
 
 
 def test_no_call_when_resting_at_frame_border():
@@ -170,6 +182,7 @@ def test_rest_speed_is_larger_near_the_camera():
     umpire = RallyUmpire(H_INV, rest_speed_px=2.0)
     near_cam, near_net = umpire._local_rest_speed(np.array([[900.0, 1000.0], [1000.0, 660.0]]))
     assert near_cam > 2.0 > near_net > 0
+    assert near_net >= 1.5                     # never below the localisation-noise floor
     # without a homography the threshold is constant
     flat = RallyUmpire(None, rest_speed_px=2.0)._local_rest_speed(np.array([[900.0, 1000.0], [1000.0, 660.0]]))
     assert flat.tolist() == [2.0, 2.0]
@@ -200,3 +213,191 @@ def test_metadata_reads_doubles(tmp_path):
     csv_path.write_text("file,loai_tran\na.mp4,doi\nb.mp4,don\n", encoding="utf-8")
     assert match_type_from_metadata("x/a.mp4", metadata_path=csv_path) == DOUBLES
     assert match_type_from_metadata("x/b.mp4", metadata_path=csv_path) == SINGLES
+
+
+# --- flight segmentation, call method, descent gate, uncertainty ---------------------------
+
+def feed_flights(umpire, flights):
+    """flights: list of point lists; each gets its own flight_id and the track never drops
+    (a racket hit restarts the track inside one detect() call)."""
+    calls, idx = [], 0
+    for fid, pts in enumerate(flights, start=1):
+        for p in pts:
+            calls.append(umpire.update(idx, p, True, flight_id=fid))
+            idx += 1
+    calls.append(umpire.update(idx, None, False))
+    return [c for c in calls if c is not None]
+
+
+def test_flight_id_change_ends_the_previous_flight():
+    # flight 1 lands; a hit-restart begins flight 2 without track_active ever dropping
+    landing_flight = flight_to((3.0, 3.0))
+    second = [(1200 + 5 * k, 300 + 4 * k) for k in range(6)]
+    calls = feed_flights(make_umpire(), [landing_flight, second])
+    assert len(calls) == 1 and calls[0].result == "IN"
+    assert calls[0].frame_idx < len(landing_flight) + 1    # judged at the boundary, not at the end
+
+
+def test_without_flight_id_hits_merge_flights():
+    """Documents why flight_id exists: without it the second flight's points are appended to the first."""
+    ump = make_umpire()
+    pts = flight_to((3.0, 3.0)) + [(1200 + 5 * k, 300 + 4 * k) for k in range(6)]
+    calls = [ump.update(i, p, True) for i, p in enumerate(pts)]
+    assert all(c is None for c in calls)        # nothing ended yet: one long merged flight
+
+
+def test_call_records_method_and_uncertainty():
+    calls = feed(make_umpire(), flight_to((3.0, 3.0)))
+    c = calls[0]
+    assert c.method in ("contact", "contact_unconfirmed")
+    assert c.uncertainty_m > 0
+    d = c.to_dict()
+    assert d["method"] == c.method and d["uncertainty_m"] == round(c.uncertainty_m, 3)
+
+
+def test_confirmed_contact_vs_track_ending_right_after_impact():
+    confirmed = feed(make_umpire(), flight_to((3.0, 3.0), rest_frames=4))[0]
+    assert confirmed.method == "contact"
+    pts = flight_to((3.0, 3.0), rest_frames=2)      # a single still step: the track ends before it can be confirmed
+    unconfirmed = feed(make_umpire(), pts)
+    assert len(unconfirmed) == 1 and unconfirmed[0].method == "contact_unconfirmed"
+
+
+def test_min_descent_blocks_a_shallow_impact_and_lets_a_deep_one_through():
+    pts = flight_to((3.0, 3.0))
+    # the flight falls several hundred px from its apex, so any sane threshold passes...
+    assert len(feed(RallyUmpire(H_INV, SINGLES, frame_size=(1080, 1920), min_descent_px=80,
+                                net_top_y=court_model.net_top_threshold_y(H)), pts)) == 1
+    # ...and an impossible one rejects the very same flight: the parameter is live
+    assert feed(RallyUmpire(H_INV, SINGLES, frame_size=(1080, 1920), min_descent_px=5000,
+                            net_top_y=court_model.net_top_threshold_y(H)), pts) == []
+
+
+def test_far_half_close_call_uses_one_pixel_of_uncertainty():
+    near_px = RallyUmpire(H_INV)._metres_per_px(np.array([court_model.world_to_img([(3.0, 3.0)], H)[0]]))[0]
+    far_px = RallyUmpire(H_INV)._metres_per_px(np.array([court_model.world_to_img([(13.4, 3.0)], H)[0]]))[0]
+    assert far_px > 0.10 > near_px           # the fixed 0.10 m threshold is under one far pixel
+    # 0.12 m outside the far baseline: OUT, and "close" because one pixel there spans more than 0.12 m
+    result, margin, close = judge((13.4 + 0.02 + 0.12, 3.0), SINGLES, half="far", uncertainty_m=far_px)
+    assert result == "OUT" and close
+    assert not judge((13.4 + 0.02 + 0.12, 3.0), SINGLES, half="far")[2]     # old behaviour
+
+
+# --- a landing that the tracker sees as a hit: judged across the flight boundary -------------
+
+def _boundary_case(after):
+    """
+    Old flight = the fall, whose last sample is on the floor; `after` = offsets (px) from that
+    sample of the next flight's points (a hit or a bounce), which the tracker saw as a new flight.
+    """
+    land = court_model.world_to_img([(3.0, 3.0)], H)[0]
+    fall = [(int(round(x)), int(round(y))) for x, y in _parabola_to_touchdown(land)] + [tuple(int(v) for v in land)]
+    return fall, [(int(land[0]) + dx, int(land[1]) + dy) for dx, dy in after]
+
+
+def test_bounce_at_the_flight_boundary_is_a_landing():
+    fall, after = _boundary_case([(2, -2), (3, -1), (3, -1), (3, -1), (3, -1)])   # small hop, then rests
+    calls = feed_flights(make_umpire(), [fall, after])
+    assert len(calls) == 1 and calls[0].result == "IN"
+    assert calls[0].method in ("contact", "contact_unconfirmed")
+    assert np.hypot(calls[0].image_pt[0] - fall[-1][0], calls[0].image_pt[1] - fall[-1][1]) < 12
+
+
+def test_racket_hit_at_the_flight_boundary_is_not_a_landing():
+    fall, after = _boundary_case([(20, -60), (40, -140), (60, -240), (80, -350), (100, -470)])   # flies off fast
+    assert feed_flights(make_umpire(), [fall, after]) == []
+
+
+def test_boundary_waits_for_look_ahead_before_deciding():
+    fall, after = _boundary_case([(2, -2), (3, -1), (3, -1), (3, -1), (3, -1)])
+    ump = make_umpire()
+    calls = []
+    for i, p in enumerate(fall):
+        calls.append(ump.update(i, p, True, flight_id=1))
+    calls.append(ump.update(len(fall), after[0], True, flight_id=2))      # boundary: not decided yet
+    assert all(c is None for c in calls)
+    for j, p in enumerate(after[1:], start=1):
+        calls.append(ump.update(len(fall) + j, p, True, flight_id=2))
+    assert any(c is not None for c in calls)                              # decided once enough points followed
+
+
+def test_boundary_is_resolved_when_the_track_ends_before_the_look_ahead_is_full():
+    fall, after = _boundary_case([(2, -2)])
+    calls = feed_flights(make_umpire(), [fall, after])
+    assert len(calls) == 1 and calls[0].method == "contact_unconfirmed"
+
+
+def test_landing_inside_the_new_flight_is_not_reported_twice():
+    fall, after = _boundary_case([(2, -2), (3, -1), (3, -1), (3, -1), (3, -1), (3, -1)])
+    calls = feed_flights(make_umpire(), [fall, after])
+    assert len(calls) == 1
+
+
+# --- shuttle seen falling, lost, then seen lying still on the floor ---------------------------
+
+def _play(ump, segments):
+    """segments: [(first_frame, [pts])]; each segment is one track that then ends (track_active drops)."""
+    calls = []
+    for first, pts in segments:
+        for k, p in enumerate(pts):
+            calls.append(ump.update(first + 5 * k, p, True))
+        calls.append(ump.update(first + 5 * len(pts), None, False))
+    return [c for c in calls if c is not None]
+
+
+def _fall_and_rest(rest_dy=0, n_rest=4):
+    land = court_model.world_to_img([(3.0, 3.0)], H)[0]
+    fall = [(int(round(x)), int(round(y))) for x, y in _parabola_to_touchdown(land)][:-3]   # still falling
+    rest = [(int(land[0]) + (k % 2), int(land[1]) + rest_dy) for k in range(n_rest)]
+    return fall, rest
+
+
+def test_fall_then_lying_still_is_called_at_the_first_resting_position():
+    fall, rest = _fall_and_rest()
+    calls = _play(make_umpire(), [(0, fall), (5 * len(fall) + 40, rest)])
+    assert len(calls) == 1 and calls[0].method == "resting" and calls[0].result == "IN"
+    assert calls[0].frame_idx == 5 * len(fall) + 40                 # the first resting detection
+    assert calls[0].image_pt == tuple(rest[0])
+
+
+def test_resting_needs_a_preceding_fall():
+    _, rest = _fall_and_rest()
+    assert _play(make_umpire(), [(1000, rest)]) == []
+
+
+def test_resting_is_not_called_when_the_shuttle_reappears_too_late():
+    fall, rest = _fall_and_rest()
+    assert _play(make_umpire(), [(0, fall), (5 * len(fall) + 500, rest)]) == []
+
+
+def test_resting_spot_far_above_where_the_fall_was_last_seen_is_not_a_landing():
+    fall, rest = _fall_and_rest(rest_dy=-200)                          # rests 200 px higher than the fall ended
+    assert _play(make_umpire(), [(0, fall), (5 * len(fall) + 40, rest)]) == []
+
+
+def test_resting_needs_enough_still_points():
+    fall, rest = _fall_and_rest(n_rest=2)
+    assert _play(make_umpire(), [(0, fall), (5 * len(fall) + 40, rest)]) == []
+
+
+def test_resting_can_be_turned_off():
+    fall, rest = _fall_and_rest()
+    ump = RallyUmpire(H_INV, SINGLES, frame_size=(1080, 1920), net_top_y=court_model.net_top_threshold_y(H),
+                      allow_resting=False)
+    assert _play(ump, [(0, fall), (5 * len(fall) + 40, rest)]) == []
+
+
+def test_resting_is_not_called_twice_after_a_seen_landing():
+    calls = _play(make_umpire(), [(0, flight_to((3.0, 3.0))), (200, _fall_and_rest()[1])])
+    assert len(calls) == 1 and calls[0].method in ("contact", "contact_unconfirmed")
+
+
+def test_resting_not_on_a_person():
+    fall, rest = _fall_and_rest()
+    ump = make_umpire()
+    calls = [ump.update(5 * k, p, True) for k, p in enumerate(fall)] + [ump.update(5 * len(fall), None, False)]
+    box = (rest[0][0] - 50, rest[0][1] - 300, rest[0][0] + 50, rest[0][1] + 10)
+    first = 5 * len(fall) + 40
+    calls += [ump.update(first + 5 * k, p, True, people_boxes=[box]) for k, p in enumerate(rest)]
+    calls.append(ump.update(first + 5 * len(rest), None, False))
+    assert [c for c in calls if c is not None] == []
