@@ -5,6 +5,7 @@ Every script does `from _common import ...` first: importing this module puts ba
 on sys.path (so `from core import ...` works when a script is run directly, from any
 working directory) and provides the boilerplate shared by the demos.
 """
+import atexit
 import logging
 import sys
 import time
@@ -24,6 +25,23 @@ from core.config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def setup_gui():
+    """
+    Call once at the start of an interactive script. On Windows the system timer ticks every
+    ~15.6 ms, so cv2.waitKey(1) blocks for ~10 ms per frame; requesting 1 ms resolution brings it
+    to ~2 ms (measured), a free 7-9 ms per displayed frame. No-op elsewhere. Restored at exit.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        winmm = ctypes.windll.winmm
+        if winmm.timeBeginPeriod(1) == 0:               # 0 = TIMERR_NOERROR
+            atexit.register(winmm.timeEndPeriod, 1)
+    except (OSError, AttributeError) as e:
+        logger.debug("Could not raise the timer resolution: %s", e)
 
 
 def setup_logging(level=logging.INFO):
@@ -124,14 +142,24 @@ def draw_shuttle_trajectory(frame, trajectory, tail_length=None, filled=None):
         cv2.circle(frame, recent[-1][0], 6, (0, 0, 255), -1)
 
 
-def draw_court_overlay(frame, H):
-    """Draw all court lines (full court) onto the frame using the homography."""
-    if H is None:
-        return
+def court_overlay_segments(H):
+    """Image-space integer endpoints [((x1, y1), (x2, y2)), ...] of every court line."""
+    segments = []
     for a, b in court_model.full_court_lines():
         pts = court_model.world_to_img([a, b], H)
-        pt1 = (int(pts[0][0]), int(pts[0][1]))
-        pt2 = (int(pts[1][0]), int(pts[1][1]))
+        segments.append(((int(pts[0][0]), int(pts[0][1])), (int(pts[1][0]), int(pts[1][1]))))
+    return segments
+
+
+def draw_court_overlay(frame, H, segments=None):
+    """
+    Draw all court lines (full court) onto the frame using the homography.
+    segments: court_overlay_segments(H), computed once by callers that draw every frame
+    (the projection of the ~13 lines otherwise repeats each frame for nothing).
+    """
+    if H is None:
+        return
+    for pt1, pt2 in (court_overlay_segments(H) if segments is None else segments):
         cv2.line(frame, pt1, pt2, (255, 255, 255), 2)
 
 
@@ -254,6 +282,7 @@ class Minimap:
         self.bg_color = bg_color
         self.offset_x = (self.map_w - court_model.COURT_WIDTH * scale) / 2
         self.offset_y = (self.map_h - court_model.COURT_LENGTH * scale) / 2
+        self._base = None       # background + court lines, drawn once
 
     def world_to_minimap(self, x, y):
         """Convert world (x, y) in meters to minimap pixel coordinates."""
@@ -261,16 +290,18 @@ class Minimap:
         py = int(self.map_h - (x * self.scale + self.offset_y))
         return (px, py)
 
-    def render(self, bounce_events=None):
-        """Create a fresh minimap image with court lines and optional bounce markers."""
+    def _court(self):
         canvas = np.zeros((self.map_h, self.map_w, 3), dtype=np.uint8)
         canvas[:] = self.bg_color
-
-        # Draw court lines
         for a, b in court_model.full_court_lines():
-            pt1 = self.world_to_minimap(*a)
-            pt2 = self.world_to_minimap(*b)
-            cv2.line(canvas, pt1, pt2, (255, 255, 255), 2)
+            cv2.line(canvas, self.world_to_minimap(*a), self.world_to_minimap(*b), (255, 255, 255), 2)
+        return canvas
+
+    def render(self, bounce_events=None):
+        """A fresh minimap image (a copy the caller may draw on) with optional bounce markers."""
+        if self._base is None:
+            self._base = self._court()
+        canvas = self._base.copy()
 
         # Draw bounce events
         if bounce_events:

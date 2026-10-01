@@ -7,7 +7,7 @@ import sys
 import cv2
 import numpy as np
 
-import _common  # noqa: F401  (puts backend/ on sys.path)
+import _common
 from core import court_model
 from core.court_calibration import CourtCalibrator
 
@@ -130,6 +130,8 @@ def interactive_calibration(image_path=None, video_path=None):
 
 
 if __name__ == "__main__":
+    _common.setup_logging()
+    _common.setup_gui()
     ap = argparse.ArgumentParser()
     ap.add_argument("image", nargs="?", help="sample frame of the video")
     ap.add_argument("--video", help="build a clean background from this video instead (recommended for refinement)")

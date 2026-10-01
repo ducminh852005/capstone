@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 
 # Shared utilities (also sets up sys.path)
-from _common import setup_logging, FPSCounter, LiveTuner
+from _common import setup_logging, setup_gui, FPSCounter, LiveTuner
 from core import court_model, trajectory
 from core.config import BOARD_SCALE, DEFAULT_VIDEO, PLAYER_DEMO_YOLO_CONF
 from core.court_calibration import CourtCalibrator
@@ -60,7 +60,8 @@ def run_tracking(video_path, stride=2, pose_variant="lite"):
         print("WARNING: calibration.json not found. Court lines will not be drawn.")
     calibrator = CourtCalibrator()
 
-    tracker = PlayerTracker(conf_thresh=PLAYER_DEMO_YOLO_CONF, fps=fps, pose_variant=pose_variant)
+    tracker = PlayerTracker(conf_thresh=PLAYER_DEMO_YOLO_CONF, fps=fps, pose_variant=pose_variant,
+                           yolo_every=1)
     print("Starting video playback... Press 'q' to stop.")
 
     tuner = LiveTuner("Tracker Tuner")
@@ -89,8 +90,8 @@ def run_tracking(video_path, stride=2, pose_variant="lite"):
                 idxs.append(frame_idx // stride)
                 pts.append(p.foot_world)
 
-        annotated = calibrator.draw_court_frame(frame, H) if H is not None else frame
-        annotated = tracker.draw_tracking(annotated, players)
+        annotated = calibrator.draw_court_frame(frame, H, copy=False) if H is not None else frame
+        annotated = tracker.draw_tracking(annotated, players, copy=False)
 
         if history and (frame_idx // stride) % 15 == 0:
             pid = max(history, key=lambda k: len(history[k][0]))
@@ -110,8 +111,6 @@ def run_tracking(video_path, stride=2, pose_variant="lite"):
         last_display = cv2.hconcat([display_video, display_board])
         cv2.imshow("YOLOv8 + ByteTrack: Player Tracking", last_display)
 
-        tuner.render()
-
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
@@ -121,6 +120,7 @@ def run_tracking(video_path, stride=2, pose_variant="lite"):
 
 if __name__ == "__main__":
     setup_logging()
+    setup_gui()
     ap = argparse.ArgumentParser()
     ap.add_argument("video", nargs="?", default=DEFAULT_VIDEO)
     ap.add_argument("--stride", type=int, default=2, help="process every N-th frame")

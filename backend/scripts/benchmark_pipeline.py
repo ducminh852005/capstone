@@ -2,8 +2,10 @@
 Headless benchmark for the player + shuttle pipeline.
 
 Measures per-stage latency (decode, YOLO, pose, shuttle) and a few quality
-proxies. There are no hand labels yet, so the quality numbers are PROXIES
-(ID stability, track continuity), not ground-truth accuracy.
+proxies (ID stability, track continuity; ground-truth scoring is scripts/eval_events.py).
+Timing starts after the warm-up of every stage, including the shuttle detector's background
+building and first (cudnn-autotuned) forward pass. Laptop GPUs throttle: to compare two
+configurations, run them back to back or use scripts/ab_bench.py, never across sessions.
 
 Usage:
     python scripts/benchmark_pipeline.py <video> --frames 1800 --out data/benchmarks/after.json
@@ -11,19 +13,20 @@ Usage:
 import argparse
 import json
 import os
+import subprocess
 import time
 from collections import defaultdict
 
 import numpy as np
 
-import _common  # noqa: F401  (puts backend/ on sys.path)
+import _common
 from core import config, court_model
 from core.player_tracker import PlayerTracker
 from core.shuttle_tracker import ShuttleDetector
 from core.umpire import RallyUmpire, match_type_from_metadata
 from core.video_io import ThreadedVideoReader
 
-WARMUP_FRAMES = 10
+MIN_WARMUP_FRAMES = 10
 
 
 class StageTimer:
@@ -67,6 +70,17 @@ def second_diff_px(points):
     return np.array(out)
 
 
+def git_revision():
+    """Short git hash of the repo (with '+dirty' when the tree has changes), or None."""
+    try:
+        run = lambda *a: subprocess.run(["git", *a], cwd=config.REPO_ROOT, capture_output=True, text=True, timeout=10)
+        rev = run("rev-parse", "--short", "HEAD").stdout.strip()
+        dirty = bool(run("status", "--porcelain").stdout.strip())
+        return rev + ("+dirty" if dirty else "") if rev else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("video")
@@ -76,10 +90,14 @@ def main():
     ap.add_argument("--out", default=None)
     ap.add_argument("--pose-variant", default=None, help="lite|heavy")
     ap.add_argument("--bg-method", default=None, help="cv shuttle backend only: knn|mog2")
-    ap.add_argument("--shuttle-backend", default="tracknet", choices=["cv", "tracknet", "tracknet-onnx"],
-                     help="candidate generator for ShuttleDetector (default: tracknet)")
+    ap.add_argument("--shuttle-backend", default=config.DEFAULT_BACKEND, choices=["cv", "tracknet", "tracknet-onnx"],
+                     help="candidate generator for ShuttleDetector (default: %(default)s)")
+    ap.add_argument("--yolo-every", type=int, default=config.PLAYER_YOLO_EVERY,
+                     help="run YOLO every N frames (default: config.PLAYER_YOLO_EVERY = %(default)s)")
     ap.add_argument("--tracknet-stride", type=int, default=None,
-                     help="tracknet backend only: frames between forward passes (default: seq_len, nonoverlap)")
+                     help="tracknet backend only: frames between forward passes (default: config.TRACKNET_BATCH_STRIDE)")
+    ap.add_argument("--all-heatmaps", action="store_true",
+                    help="tracknet backend only: use every heatmap of a pass (detection per frame, 7 frames late)")
     ap.add_argument("--tracknet-conf", type=float, default=None,
                      help="tracknet backend only: heatmap confidence threshold (default: 0.5)")
     args = ap.parse_args()
@@ -90,10 +108,13 @@ def main():
         raise SystemExit("No calibration found: run scripts/calibrate_court.py first.")
     match_type = match_type_from_metadata(args.video)
     timer = StageTimer()
+    reader = ThreadedVideoReader(args.video, start_frame=args.start)
+    frames = iter(reader)
 
     tracker = detector = umpire = None
     if "player" in stages:
-        kwargs = {"conf_thresh": config.PLAYER_DEMO_YOLO_CONF, "fps": 60.0}
+        kwargs = {"conf_thresh": config.PLAYER_DEMO_YOLO_CONF, "fps": reader.fps,
+                  "yolo_every": args.yolo_every}
         if args.pose_variant:
             kwargs["pose_variant"] = args.pose_variant
         tracker = PlayerTracker(**kwargs)
@@ -103,8 +124,8 @@ def main():
         kwargs = {"backend": args.shuttle_backend}
         if args.bg_method and args.shuttle_backend == "cv":
             kwargs["bg_method"] = args.bg_method
-        if args.shuttle_backend == "tracknet" and (args.tracknet_stride or args.tracknet_conf):
-            tnk = {}
+        if args.shuttle_backend == "tracknet" and (args.tracknet_stride or args.tracknet_conf or args.all_heatmaps):
+            tnk = {"all_heatmaps": True} if args.all_heatmaps else {}
             if args.tracknet_stride:
                 tnk["batch_stride"] = args.tracknet_stride
             if args.tracknet_conf:
@@ -113,9 +134,8 @@ def main():
             kwargs["tracknet_kwargs"] = tnk
         detector = ShuttleDetector(**kwargs)
 
-    reader = ThreadedVideoReader(args.video, start_frame=args.start)
-    frames = iter(reader)
-
+    warmup = max(MIN_WARMUP_FRAMES, detector.warmup_frames if detector is not None else 0)
+    roi = None
     player_ids_per_frame = []
     shuttle_pts = []
     calls = []
@@ -129,7 +149,7 @@ def main():
             idx, frame = next(frames)
         except StopIteration:
             break
-        if n == WARMUP_FRAMES:
+        if n == warmup:
             timer.enabled = True
             t_start = time.perf_counter()
             decode_t = 0.0
@@ -143,12 +163,13 @@ def main():
             t1 = time.perf_counter()
             pboxes = [p.bbox for p in players.values()] if tracker is not None else None
             others = tracker.non_player_boxes(players) if tracker is not None else None
-            roi = court_model.shuttle_roi(H, frame.shape)
+            if roi is None:
+                roi = court_model.shuttle_roi(H, frame.shape)
             pt = detector.detect(frame, roi=roi, exclude_boxes=others, player_boxes=pboxes)[0]
             if umpire is None:
                 umpire = RallyUmpire(H_inv, match_type=match_type, frame_size=frame.shape[:2], roi=roi,
                                      net_top_y=court_model.net_top_threshold_y(H))
-            c = umpire.update(idx, pt, detector.track_active,
+            c = umpire.update(idx - detector.frame_lag, pt, detector.track_active,
                               people_boxes=list(tracker.last_boxes) if tracker is not None else None,
                               flight_id=detector.flight_id)
             if c is not None:
@@ -160,11 +181,20 @@ def main():
         n += 1
 
     wall = time.perf_counter() - t_start if t_start else 0.0
-    timed = max(n - WARMUP_FRAMES, 1)
+    timed = max(n - warmup, 1)
 
     result = {
         "video": os.path.basename(args.video),
+        "git": git_revision(),
+        "config": {
+            "shuttle_backend": args.shuttle_backend if detector is not None else None,
+            "tracknet_strides_active_idle": detector.strides if detector is not None else None,
+            "all_heatmaps": args.all_heatmaps if detector is not None else None,
+            "yolo_every": args.yolo_every if tracker is not None else None,
+            "yolo_half": tracker.half if tracker is not None else None,
+        },
         "frames": n,
+        "warmup_frames": warmup,
         "wall_fps": round(timed / wall, 2) if wall else None,
         "ms_per_frame": {
             "decode_wait": round(1000 * decode_t / timed, 2),

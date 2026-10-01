@@ -1,16 +1,112 @@
 {
   "_readme": "Hand labels for scripts/eval_events.py. Frame numbers are absolute frame indexes of data/cfr/tran04_cam1.mp4 (60 fps). Keys starting with _ are ignored. Fill the three lists, then: python scripts/eval_events.py ../data/cfr/tran04_cam1.mp4",
-  "_hits": "frame the racket touches the shuttle. Detections come up to one TrackNet stride (8 frames) later, so +-12 frames are tolerated by default.",
+  "_hits": "frame the racket touches the shuttle. Detections come up to one TrackNet stride (config.TRACKNET_BATCH_STRIDE = 5 frames) later, so +-12 frames are tolerated by default.",
   "_smashes": "the hit frame of each smash (also list it under hits).",
   "_landings": "first frame the shuttle touches the floor; 'call' is the true line call for that landing (IN, OUT) or null when unsure.",
   "_example": {
-    "hits": [{"frame": 346}],
-    "smashes": [{"frame": 394, "note": "optional comment"}],
-    "landings": [{"frame": 1498, "call": "IN"}]
+    "hits": [
+      {
+        "frame": 346
+      }
+    ],
+    "smashes": [
+      {
+        "frame": 394,
+        "note": "optional comment"
+      }
+    ],
+    "landings": [
+      {
+        "frame": 1498,
+        "call": "IN"
+      }
+    ]
   },
   "video": "tran04_cam1.mp4",
   "fps": 60,
   "hits": [],
   "smashes": [],
-  "landings": []
+  "landings": [
+    {
+      "frame": 90,
+      "call": null,
+      "note": "seed from missed_bounces.txt"
+    },
+    {
+      "frame": 423,
+      "call": null,
+      "note": "seed from missed_bounces.txt (presses 423-424)"
+    },
+    {
+      "frame": 440,
+      "call": null,
+      "note": "seed from missed_bounces.txt (presses 440-443)"
+    },
+    {
+      "frame": 466,
+      "call": null,
+      "note": "seed from missed_bounces.txt (presses 466-468)"
+    },
+    {
+      "frame": 500,
+      "call": null,
+      "note": "seed from missed_bounces.txt (presses 500-501)"
+    },
+    {
+      "frame": 1132,
+      "call": null,
+      "note": "seed from missed_bounces.txt (presses 1132-1135)"
+    },
+    {
+      "frame": 1171,
+      "call": null,
+      "note": "seed from missed_bounces.txt (presses 1171-1174)"
+    },
+    {
+      "frame": 1523,
+      "call": null,
+      "note": "seed from missed_bounces.txt (presses 1523-1526)"
+    },
+    {
+      "frame": 2435,
+      "call": null,
+      "note": "seed from missed_bounces.txt (presses 2435-2438)"
+    },
+    {
+      "frame": 2451,
+      "call": null,
+      "note": "seed from missed_bounces.txt (presses 2451-2453)"
+    },
+    {
+      "frame": 2753,
+      "call": null,
+      "note": "seed from missed_bounces.txt (presses 2753-2755)"
+    },
+    {
+      "frame": 3121,
+      "call": null,
+      "note": "seed from missed_bounces.txt (presses 3121-3124)"
+    },
+    {
+      "frame": 3691,
+      "call": null,
+      "note": "seed from missed_bounces.txt (presses 3691-3694)"
+    },
+    {
+      "frame": 4573,
+      "call": null,
+      "note": "seed from missed_bounces.txt (presses 4573-4576)"
+    },
+    {
+      "frame": 5894,
+      "call": null,
+      "note": "seed from missed_bounces.txt (presses 5894-5897)"
+    },
+    {
+      "frame": 6821,
+      "call": null,
+      "note": "seed from missed_bounces.txt (presses 6821-6825)"
+    }
+  ],
+  "_seed": "landings were seeded from data/missed_bounces.txt (frames where the video was paused and 's' pressed: landings the umpire had MISSED). They are approximate: pressed a few frames after the bounce, use --tol 30. They give recall only; landings the umpire already called were not annotated. Please review."
 }

@@ -11,7 +11,7 @@ import sys
 import cv2
 
 # Shared utilities (also sets up sys.path)
-from _common import create_detector, setup_logging, FPSCounter, LiveTuner
+from _common import create_detector, setup_logging, setup_gui, FPSCounter, LiveTuner
 from core.config import DEFAULT_VIDEO
 
 
@@ -68,5 +68,6 @@ def run_shuttle(video_path):
 
 if __name__ == "__main__":
     setup_logging()
+    setup_gui()
     target_video = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_VIDEO
     run_shuttle(target_video)

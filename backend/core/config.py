@@ -64,6 +64,12 @@ KALMAN_MAX_SPEED_RATIO = 3.0
 """Physics check: max allowed instantaneous speed jump ratio. If a candidate causes
 a higher speed jump, it is rejected (forces track to break on racket hits)."""
 
+KALMAN_MAX_SPEED_RATIO_PER_FRAME = 2.0
+"""Same check for a detection stream with a candidate on EVERY frame (TRACKNET_ALL_HEATMAPS). The
+velocities compared are chords over >= PHYSICS_CHORD_MIN_FRAMES frames of a continuously updated
+track, so a hit shows up as a smaller ratio than with detections a stride apart; 2.0 finds the
+frame-394 smash (20 px/frame) that 3.0 lets through as ordinary flight."""
+
 KALMAN_MIN_COS_ANGLE = 0.0
 """Physics check: min allowed cosine of angle change (0.0 = 90 deg). Sharp turns are rejected."""
 
@@ -82,6 +88,20 @@ TRACKNET_BATCH_STRIDE = 5
 frames (the model always sees a full seq_len = 8 frame window). Smaller = finer detection
 resolution but proportionally more GPU work (each pass costs ~100 ms on the reference GPU):
 5 means 1.6x the passes of the 8-frame (non-overlapping) mode. 0/None = seq_len."""
+
+TRACKNET_ALL_HEATMAPS = False
+"""Use all seq_len (8) heatmaps of every forward pass instead of only the newest one. The stride
+is then seq_len (no overlap: 14.6 ms/frame of GPU instead of 23.3 at stride 5) and there is a
+detection candidate for EVERY frame, but they arrive in bursts, so the source replays them one
+per call with a constant delay of seq_len - 1 frames (ShuttleDetector.frame_lag). Consumers must
+use `frame_idx - detector.frame_lag` as the frame of the returned point."""
+
+TRACKNET_IDLE_STRIDE = 8
+"""Stride used while no shuttle track is active (>= TRACKNET_BATCH_STRIDE; 0 = same as the active
+stride). About 90% of a match has no shuttle in play, and a new track only needs one confident
+detection to start, so looking less often then saves forward passes (8 frames: 14.6 ms/frame of
+GPU instead of 23.3) at the price of noticing a new flight up to 3 frames later. Only applies
+when the caller did not ask for an explicit batch_stride."""
 
 TRACKNET_MIN_COAST = 12
 """Minimum coast (frames) for TrackNet backends."""
@@ -113,6 +133,13 @@ PHYSICS_MIN_SPEED_PX = 2.0
 """Physics filter only runs when the current track speed (px/frame) exceeds this;
 below it the direction/speed of the track is not reliable."""
 
+PHYSICS_STOP_BASELINE_FRAMES = 2
+"""A physics break is classified as a stop (the shuttle came to rest) from its speed measured against
+the newest detection at least this old. Over fewer frames position noise alone exceeds
+PHYSICS_STOP_SPEED_PX; but measuring against the 4-frame reference of the physics test itself would
+read a shuttle that reversed (net displacement ~0) as a stop. Detections >= 5 frames apart already
+satisfy it. The CV backend uses 1."""
+
 PHYSICS_STOP_SPEED_PX = 2.0
 """When the physics filter breaks a track and the shuttle leaves the break slower than this
 (px/frame), it came to rest (landed or resting on the floor): the track restarts but it is
@@ -121,6 +148,21 @@ not a racket hit and not a new flight."""
 PHYSICS_MAX_DECEL_RATIO = 10.0
 """Reject a candidate if it would slow the shuttle by more than this factor.
 Air drag can cost 3-4x in one batch, so 10x means it was not the same shuttle."""
+
+PHYSICS_HIT_GATE_FRAMES = 5
+"""A racket hit can move the shuttle away from where the Kalman filter expects it by roughly what
+it travels in this many frames. The distance within which an unphysical candidate is taken for
+"the shuttle after a hit" (rather than an unrelated blob) is min_gate_px scaled to this many
+frames. With detections >= 5 frames apart the ordinary gate is already that wide; with a
+detection on every frame it is 5x wider than the tracking gate."""
+
+PHYSICS_CHORD_MIN_FRAMES = 4
+"""The physics filter compares velocities measured over at least this many frames: the newest
+detection at least this old is the reference point, and the velocity before it is measured
+against an earlier detection at least this far back. With a detection every TrackNet stride
+(>= 4 frames) that is simply the last two detections; with a detection on EVERY frame it stops
+position noise of a few px turning into velocity noise as large as the speed itself. The CV
+backend (a detection per frame, tuned that way) uses 1."""
 
 PHYSICS_LOOKBACK_FRAMES = 15
 """How far back in the trajectory to look for the last valid detection."""
@@ -201,12 +243,16 @@ SHUTTLE_FILL_LINK_STRIDES = 1.5
 """Two detections belong to the same chain when they are at most this many detection
 strides apart (stride = TrackNet batch_stride, 1 for the CV backend)."""
 
+SHUTTLE_FILL_LINK_FRAMES = 12
+"""Default chain link (frames) for gap_fill.fill_gaps callers that do not know the stride;
+ShuttleDetector.fill_gaps derives it from SHUTTLE_FILL_LINK_STRIDES instead."""
+
 SHUTTLE_FILL_MIN_CHAIN_LEN = 2
 """A chain must hold at least this many detections on both sides of a gap for the gap to
 be bridged: fewer cannot tell which way the shuttle was flying."""
 
 SHUTTLE_FILL_MAX_GAP_FRAMES = 48
-"""Longest gap (frames) bridged between two chains (48 = 6 TrackNet strides)."""
+"""Longest gap (frames) bridged between two chains (~10 strides at the default stride of 5)."""
 
 SHUTTLE_FILL_STRIDE_FIT_POINTS = 2
 """Detections taken from each side of a gap inside a chain for the inertia + gravity fit.
@@ -222,7 +268,8 @@ on both sides this well (px RMS). A racket hit inside the gap breaks the fit."""
 
 SHUTTLE_FILL_TRUSTED_GAP_FRAMES = 32
 """Prediction error grows with the gap (median 4 px over 16 frames, 8 px over 24, p90 ~90 px
-over 32). Beyond this many frames the RMS limit shrinks in proportion to the gap."""
+over 32; measured on tran04 at stride 8, order of magnitude the same at 5). Beyond this many
+frames the RMS limit shrinks in proportion to the gap."""
 
 
 # =====================================================================
@@ -256,6 +303,11 @@ UMPIRE_REST_MAX_GAP_FRAMES = 90
 UMPIRE_REST_Y_SLACK_PX = 20
 """A shuttle that fell cannot come to rest more than this many px HIGHER in the image than
 where it was last seen falling."""
+
+UMPIRE_MIN_STEP_FRAMES = 5
+"""The landing logic (impact, rest speed, min flight length, look-ahead) is tuned for detections
+about 5 frames apart (the default TrackNet stride). A denser stream (a detection on every frame)
+is thinned to at least this spacing before it is analysed; sparser streams are untouched."""
 
 UMPIRE_REST_FRAMES = 2
 """How many consecutive slow frames confirm a landing."""
@@ -309,14 +361,21 @@ UMPIRE_MIN_METERS_PER_PX = 1e-6
 PLAYER_YOLO_CONF = 0.4
 """YOLO person detection confidence threshold."""
 
+PLAYER_YOLO_HALF = False
+"""Run YOLO in FP16 on CUDA. Off: on the reference GPU (T550, no useful FP16 throughput) FP16
+made every track() call ~2x slower (30-35 ms vs 14-16 ms). GPUs with real FP16 units may gain."""
+
 PLAYER_YOLO_IMGSZ = 640
 """YOLO input image size (pixels)."""
 
 PLAYER_POSE_EVERY = 5
 """Run MediaPipe pose on the selected player every N update() calls."""
 
-PLAYER_YOLO_EVERY = 1
-"""Run YOLO+ByteTrack every N process() calls; in between, reuse last boxes."""
+PLAYER_YOLO_EVERY = 3
+"""Run YOLO+ByteTrack every N process() calls; in between, reuse last boxes. Boxes are only used
+to exclude players' bodies from the shuttle candidates and to pick the player, so a box that is
+2 frames old is accurate enough; 3 halves the player cost (26 -> 14 ms/frame, FP32). Callers that
+draw or measure player positions every frame (demo_player_tracker) pass yolo_every=1."""
 
 # --- Player selector ---
 SELECTOR_WINDOW_S = 10.0
@@ -369,6 +428,12 @@ SMASH_REQUIRE_PHYSICS_HIT = True
 """Only a track that restarted because the physics filter broke the previous one (a racket
 hit) can be a smash. A track that starts from nothing is measured but not counted: it may be
 a shuttle first seen while falling fast (not a hit)."""
+
+SMASH_MIN_DT_FRAMES = 4
+"""The hit's speed is measured to the first detection at least this many frames after the track
+started: over fewer frames a few px of position noise is as large as the displacement. With a
+detection every TrackNet stride (>= 4) this is the first detection; with one on every frame it
+skips the first few."""
 
 SMASH_MIN_Y = 50.0
 """Ignore hits whose image y (px) is above this: the shuttle is out of the play area."""

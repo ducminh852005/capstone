@@ -19,7 +19,7 @@ import numpy as np
 
 # Shared utilities (also sets up sys.path)
 from _common import (
-    create_detector, load_video_and_calibration, setup_logging,
+    create_detector, load_video_and_calibration, setup_logging, setup_gui,
     draw_shuttle_trajectory, draw_court_overlay, LiveTuner,
 )
 from core import config
@@ -48,7 +48,8 @@ def run_smash_detection(video_path, backend=config.DEFAULT_BACKEND):
     for frame_idx, frame in reader:
         pt, _ = detector.detect(frame, roi=roi)
 
-        hit = smash.update(frame_idx, pt, detector.track_active, detector.track_len, detector.kf.x[:2],
+        hit = smash.update(frame_idx - detector.frame_lag, pt, detector.track_active, detector.track_len,
+                           detector.kf.x[:2],
                            detector.start_source)
         if hit is not None:
             print(f"[DEBUG] Frame {hit.frame_idx}: Track started by {hit.source} "
@@ -100,6 +101,7 @@ def _draw_smash_overlays(frame, frame_idx, smash_events):
 
 if __name__ == "__main__":
     setup_logging()
+    setup_gui()
     target_video = sys.argv[1] if len(sys.argv) > 1 else config.DEFAULT_VIDEO
     backend = sys.argv[2] if len(sys.argv) > 2 else config.DEFAULT_BACKEND
     run_smash_detection(target_video, backend)

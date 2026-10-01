@@ -37,19 +37,23 @@ class HitMeasurement:
     angle_deg: float        # atan2(dy, dx) in image coordinates (y down): 90 = straight down
     is_smash: bool
     smash_number: int = 0   # running smash count when is_smash, else 0
-    source: str = "physics"  # how the track started: "physics" (a hit) or "new"
+    source: str = "physics"  # how the track started: "physics" (a hit), "stop" (came to rest) or "new"
     dt_frames: int = 0      # frames between the two detections the speed was measured on
 
 
 class SmashDetector:
     def __init__(self, speed_threshold: Optional[float] = None, min_y: Optional[float] = None,
-                 min_angle: Optional[float] = None, max_angle: Optional[float] = None):
+                 min_angle: Optional[float] = None, max_angle: Optional[float] = None,
+                 min_dt_frames: Optional[int] = None):
         """
         speed_threshold: px/frame a hit must exceed (default config.SMASH_SPEED_THRESHOLD).
         min_y: hits above this image row are ignored (default config.SMASH_MIN_Y).
         min_angle / max_angle: accepted direction range in degrees (config.SMASH_MIN_ANGLE /
             SMASH_MAX_ANGLE).
+        min_dt_frames: measure the speed to the first detection at least this many frames after
+            the track start (default config.SMASH_MIN_DT_FRAMES).
         """
+        self._min_dt = min_dt_frames
         self._speed_threshold = speed_threshold
         self._min_y = min_y
         self._min_angle = min_angle
@@ -96,7 +100,7 @@ class SmashDetector:
         track_pos: (x, y) estimate of the shuttle on that start frame, used when there is no
             detection on it (e.g. ShuttleDetector.kf.x[:2]).
         start_source: ShuttleDetector.start_source, read on the frame the track starts:
-            "physics" (restart at a racket hit) or "new".
+            "physics" (restart at a racket hit), "stop" (the shuttle came to rest) or "new".
 
         Returns a HitMeasurement on the frame the second detection arrives (whether or not
         it is a smash), otherwise None.
@@ -109,7 +113,8 @@ class SmashDetector:
             start_pt = pt if pt is not None else track_pos
             self._pending = (frame_idx, start_pt, start_source)
 
-        if self._pending is None or pt is None or frame_idx <= self._pending[0]:
+        min_dt = config.SMASH_MIN_DT_FRAMES if self._min_dt is None else self._min_dt
+        if self._pending is None or pt is None or frame_idx - self._pending[0] < max(min_dt, 1):
             return None
 
         start_frame, start_pt, source = self._pending

@@ -120,3 +120,32 @@ def test_detector_fill_gaps_uses_its_trajectory_and_meta():
     assert max(err(p) for p in filled) < 1.5       # detections were rounded to whole pixels
     # tail window: only recent calls are looked at
     assert all(p.frame_idx > 30 for p in det.fill_gaps(tail=26))
+
+
+def test_fit_cache_returns_exactly_what_a_fresh_fit_would_and_is_hit_on_repeats():
+    from core import gap_fill
+    window = dets_at([0, 8, 16, 24])
+    gap_fill._fit_cached.cache_clear()
+    first = gap_fill._fit(window)
+    uncached = gap_fill._fit_cached.__wrapped__(tuple((d.frame_idx, d.pt[0], d.pt[1]) for d in window))
+    for a, b in zip(first, uncached):
+        assert np.array_equal(a, b)
+    hits_before = gap_fill._fit_cached.cache_info().hits
+    gap_fill._fit(window)
+    assert gap_fill._fit_cached.cache_info().hits == hits_before + 1
+
+
+def test_repeated_fill_after_one_new_detection_only_fits_the_new_gaps():
+    from core import gap_fill
+    base = dets_at([0, 8, 16, 24, 32, 40])
+    gap_fill._fit_cached.cache_clear()
+    first = fill_gaps(base, max_link_frames=12)
+    misses = gap_fill._fit_cached.cache_info().misses
+    grown = base + dets_at([48])
+    second = fill_gaps(grown, max_link_frames=12)
+    new_misses = gap_fill._fit_cached.cache_info().misses - misses
+    assert new_misses <= 2                               # the last gaps' windows changed, the rest are cached
+    # gaps whose fit window did not change are bit-identical; the newest gap is re-fitted with the new point
+    assert [p for p in second if p.frame_idx <= 32] == [p for p in first if p.frame_idx <= 32]
+    later = [p for p in second if 32 < p.frame_idx <= 40], [p for p in first if 32 < p.frame_idx <= 40]
+    assert all(abs(a.pt[0] - b.pt[0]) < 1e-6 and abs(a.pt[1] - b.pt[1]) < 1e-6 for a, b in zip(*later))

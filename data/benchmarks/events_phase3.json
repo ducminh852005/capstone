@@ -1,0 +1,567 @@
+{
+  "video": "tran04_cam1.mp4",
+  "backend": "tracknet",
+  "tol": 30,
+  "results": {
+    "hits": {
+      "tp": [],
+      "fp": [
+        392,
+        422,
+        981,
+        1056,
+        1352,
+        1432,
+        1737,
+        1831,
+        1906,
+        1952,
+        2023,
+        2122,
+        2182,
+        2267,
+        2302,
+        2984,
+        3550,
+        3679,
+        4129,
+        4194,
+        4264,
+        4339,
+        4853,
+        5336,
+        5401,
+        5491,
+        5546,
+        5636,
+        5701,
+        5776,
+        6060,
+        6268,
+        6640
+      ],
+      "fn": [],
+      "precision": 0.0,
+      "recall": null,
+      "f1": null
+    },
+    "smashes": {
+      "tp": [],
+      "fp": [
+        392
+      ],
+      "fn": [],
+      "precision": 0.0,
+      "recall": null,
+      "f1": null
+    },
+    "landings": {
+      "tp": [
+        [
+          417,
+          423
+        ],
+        [
+          3093,
+          3121
+        ],
+        [
+          3674,
+          3691
+        ]
+      ],
+      "fp": [
+        2392,
+        2678,
+        3924,
+        4848,
+        6263,
+        6749
+      ],
+      "fn": [
+        90,
+        440,
+        466,
+        500,
+        1132,
+        1171,
+        1523,
+        2435,
+        2451,
+        2753,
+        4573,
+        5894,
+        6821
+      ],
+      "precision": 0.3333333333333333,
+      "recall": 0.1875,
+      "f1": 0.24000000000000005
+    }
+  },
+  "call_agreement": null,
+  "predictions": {
+    "hits": [
+      392,
+      422,
+      981,
+      1056,
+      1352,
+      1432,
+      1737,
+      1831,
+      1906,
+      1952,
+      2023,
+      2122,
+      2182,
+      2267,
+      2302,
+      2984,
+      3550,
+      3679,
+      4129,
+      4194,
+      4264,
+      4339,
+      4853,
+      5336,
+      5401,
+      5491,
+      5546,
+      5636,
+      5701,
+      5776,
+      6060,
+      6268,
+      6640
+    ],
+    "smashes": [
+      392
+    ],
+    "landings": [
+      {
+        "frame_idx": 417,
+        "result": "IN",
+        "half": "far",
+        "image_pt": [
+          1559,
+          645
+        ],
+        "world_pt": [
+          11.255,
+          3.729
+        ],
+        "margin_m": 1.931,
+        "close_call": false,
+        "method": "contact",
+        "uncertainty_m": 0.109
+      },
+      {
+        "frame_idx": 2392,
+        "result": "IN",
+        "half": "near",
+        "image_pt": [
+          739,
+          704
+        ],
+        "world_pt": [
+          2.773,
+          0.661
+        ],
+        "margin_m": 0.221,
+        "close_call": false,
+        "method": "contact",
+        "uncertainty_m": 0.05
+      },
+      {
+        "frame_idx": 2678,
+        "result": "IN",
+        "half": "far",
+        "image_pt": [
+          1289,
+          682
+        ],
+        "world_pt": [
+          6.797,
+          3.074
+        ],
+        "margin_m": 0.117,
+        "close_call": false,
+        "method": "contact",
+        "uncertainty_m": 0.064
+      },
+      {
+        "frame_idx": 3093,
+        "result": "IN",
+        "half": "far",
+        "image_pt": [
+          1568,
+          634
+        ],
+        "world_pt": [
+          12.467,
+          3.403
+        ],
+        "margin_m": 0.953,
+        "close_call": false,
+        "method": "resting",
+        "uncertainty_m": 0.129
+      },
+      {
+        "frame_idx": 3674,
+        "result": "OUT",
+        "half": "near",
+        "image_pt": [
+          497,
+          726
+        ],
+        "world_pt": [
+          1.041,
+          0.237
+        ],
+        "margin_m": -0.203,
+        "close_call": false,
+        "method": "contact_unconfirmed",
+        "uncertainty_m": 0.043
+      },
+      {
+        "frame_idx": 3924,
+        "result": "IN",
+        "half": "near",
+        "image_pt": [
+          1062,
+          697
+        ],
+        "world_pt": [
+          4.798,
+          2.212
+        ],
+        "margin_m": 1.772,
+        "close_call": false,
+        "method": "contact",
+        "uncertainty_m": 0.053
+      },
+      {
+        "frame_idx": 4848,
+        "result": "IN",
+        "half": "far",
+        "image_pt": [
+          1618,
+          700
+        ],
+        "world_pt": [
+          7.766,
+          5.394
+        ],
+        "margin_m": 0.266,
+        "close_call": false,
+        "method": "contact",
+        "uncertainty_m": 0.057
+      },
+      {
+        "frame_idx": 6263,
+        "result": "IN",
+        "half": "far",
+        "image_pt": [
+          1383,
+          673
+        ],
+        "world_pt": [
+          7.889,
+          3.389
+        ],
+        "margin_m": 1.209,
+        "close_call": false,
+        "method": "contact",
+        "uncertainty_m": 0.072
+      },
+      {
+        "frame_idx": 6749,
+        "result": "IN",
+        "half": "far",
+        "image_pt": [
+          1565,
+          633
+        ],
+        "world_pt": [
+          12.556,
+          3.339
+        ],
+        "margin_m": 0.864,
+        "close_call": false,
+        "method": "resting",
+        "uncertainty_m": 0.13
+      }
+    ],
+    "starts": [
+      {
+        "frame": 322,
+        "source": "new"
+      },
+      {
+        "frame": 392,
+        "source": "physics"
+      },
+      {
+        "frame": 422,
+        "source": "physics"
+      },
+      {
+        "frame": 901,
+        "source": "new"
+      },
+      {
+        "frame": 981,
+        "source": "physics"
+      },
+      {
+        "frame": 1056,
+        "source": "physics"
+      },
+      {
+        "frame": 1082,
+        "source": "new"
+      },
+      {
+        "frame": 1297,
+        "source": "new"
+      },
+      {
+        "frame": 1352,
+        "source": "physics"
+      },
+      {
+        "frame": 1432,
+        "source": "physics"
+      },
+      {
+        "frame": 1465,
+        "source": "new"
+      },
+      {
+        "frame": 1727,
+        "source": "new"
+      },
+      {
+        "frame": 1737,
+        "source": "physics"
+      },
+      {
+        "frame": 1801,
+        "source": "new"
+      },
+      {
+        "frame": 1831,
+        "source": "physics"
+      },
+      {
+        "frame": 1906,
+        "source": "physics"
+      },
+      {
+        "frame": 1942,
+        "source": "new"
+      },
+      {
+        "frame": 1952,
+        "source": "physics"
+      },
+      {
+        "frame": 1978,
+        "source": "new"
+      },
+      {
+        "frame": 2023,
+        "source": "physics"
+      },
+      {
+        "frame": 2087,
+        "source": "new"
+      },
+      {
+        "frame": 2122,
+        "source": "physics"
+      },
+      {
+        "frame": 2182,
+        "source": "physics"
+      },
+      {
+        "frame": 2267,
+        "source": "physics"
+      },
+      {
+        "frame": 2302,
+        "source": "physics"
+      },
+      {
+        "frame": 2397,
+        "source": "stop"
+      },
+      {
+        "frame": 2427,
+        "source": "stop"
+      },
+      {
+        "frame": 2563,
+        "source": "new"
+      },
+      {
+        "frame": 2683,
+        "source": "stop"
+      },
+      {
+        "frame": 2758,
+        "source": "new"
+      },
+      {
+        "frame": 2829,
+        "source": "new"
+      },
+      {
+        "frame": 2887,
+        "source": "new"
+      },
+      {
+        "frame": 2954,
+        "source": "new"
+      },
+      {
+        "frame": 2984,
+        "source": "physics"
+      },
+      {
+        "frame": 3093,
+        "source": "new"
+      },
+      {
+        "frame": 3396,
+        "source": "new"
+      },
+      {
+        "frame": 3465,
+        "source": "new"
+      },
+      {
+        "frame": 3550,
+        "source": "physics"
+      },
+      {
+        "frame": 3639,
+        "source": "new"
+      },
+      {
+        "frame": 3679,
+        "source": "physics"
+      },
+      {
+        "frame": 3894,
+        "source": "new"
+      },
+      {
+        "frame": 4055,
+        "source": "new"
+      },
+      {
+        "frame": 4104,
+        "source": "new"
+      },
+      {
+        "frame": 4129,
+        "source": "physics"
+      },
+      {
+        "frame": 4194,
+        "source": "physics"
+      },
+      {
+        "frame": 4264,
+        "source": "physics"
+      },
+      {
+        "frame": 4339,
+        "source": "physics"
+      },
+      {
+        "frame": 4404,
+        "source": "stop"
+      },
+      {
+        "frame": 4748,
+        "source": "new"
+      },
+      {
+        "frame": 4853,
+        "source": "physics"
+      },
+      {
+        "frame": 4883,
+        "source": "stop"
+      },
+      {
+        "frame": 5311,
+        "source": "new"
+      },
+      {
+        "frame": 5336,
+        "source": "physics"
+      },
+      {
+        "frame": 5401,
+        "source": "physics"
+      },
+      {
+        "frame": 5491,
+        "source": "physics"
+      },
+      {
+        "frame": 5546,
+        "source": "physics"
+      },
+      {
+        "frame": 5636,
+        "source": "physics"
+      },
+      {
+        "frame": 5701,
+        "source": "physics"
+      },
+      {
+        "frame": 5776,
+        "source": "physics"
+      },
+      {
+        "frame": 6040,
+        "source": "new"
+      },
+      {
+        "frame": 6060,
+        "source": "physics"
+      },
+      {
+        "frame": 6169,
+        "source": "new"
+      },
+      {
+        "frame": 6213,
+        "source": "new"
+      },
+      {
+        "frame": 6268,
+        "source": "physics"
+      },
+      {
+        "frame": 6560,
+        "source": "new"
+      },
+      {
+        "frame": 6640,
+        "source": "physics"
+      },
+      {
+        "frame": 6749,
+        "source": "new"
+      }
+    ]
+  }
+}

@@ -25,10 +25,13 @@ data/labels/*
 backend/models/
 
 # Generated artifacts
-backend/highlights.html
-backend/demo_trajectory.mp4
 data/highlights.html
 data/missed_bounces.txt
+
+# Local databases and downloaded checkpoint archive
+*.db
+backend/ckpts/
+backend/ckpts.zip
 .pytest_cache/
 
 # IDE

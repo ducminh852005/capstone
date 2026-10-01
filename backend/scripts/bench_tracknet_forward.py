@@ -12,8 +12,9 @@ import time
 
 import torch
 
-import _common  # noqa: F401  (puts backend/ on sys.path)
+import _common
 from core import config
+from core.tracknet import load_checkpoint
 from core.tracknet_model import TrackNet, WIDTH, HEIGHT, in_dim_for
 
 DEFAULT_CKPT = config.TRACKNET_WEIGHTS_PATH
@@ -32,7 +33,7 @@ def main():
               f"{torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB total")
 
     t0 = time.perf_counter()
-    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+    ckpt = load_checkpoint(ckpt_path, map_location=device)
     print(f"Checkpoint loaded in {time.perf_counter() - t0:.2f}s")
 
     params = ckpt["param_dict"]
@@ -49,15 +50,11 @@ def main():
     print(f"Model built OK. {n_params / 1e6:.1f}M parameters.")
 
     # FP16 measured unsafe (non-finite output) AND slower than FP32 on this project's
-    # reference GPU (T550) -- see core/tracknet.py's use_half docstring. Match its default.
-    use_half = False
-    if use_half:
-        model = model.half()
+    # reference GPU (T550) -- see core/tracknet.py's use_half docstring: benchmark FP32.
     if device.type == "cuda":
         torch.backends.cudnn.benchmark = True
 
-    dtype = torch.float16 if use_half else torch.float32
-    x = torch.rand(1, in_dim, HEIGHT, WIDTH, device=device, dtype=dtype)
+    x = torch.rand(1, in_dim, HEIGHT, WIDTH, device=device, dtype=torch.float32)
 
     # warm-up (cudnn autotune + CUDA context / kernel JIT)
     with torch.no_grad():
@@ -95,4 +92,5 @@ def main():
 
 
 if __name__ == "__main__":
+    _common.setup_logging()
     main()

@@ -1,4 +1,6 @@
 import bisect
+from collections import deque
+
 import cv2
 import numpy as np
 import logging
@@ -242,7 +244,7 @@ class ShuttleDetector:
                  init_max_residual_px=config.CV_INIT_MAX_RESIDUAL_PX,
                  init_speed_px=config.CV_INIT_SPEED_RANGE,
                  init_min_confidence=config.TRACKNET_INIT_MIN_CONFIDENCE,
-                 max_speed_ratio=config.KALMAN_MAX_SPEED_RATIO,
+                 max_speed_ratio=None,
                  min_cos_angle=config.KALMAN_MIN_COS_ANGLE,
                  simple_init=None):
         """
@@ -276,7 +278,7 @@ class ShuttleDetector:
         elif backend == "tracknet":
             self._source = TrackNetCandidateSource(tracknet_path, **(tracknet_kwargs or {}))
             self.simple_init = True if simple_init is None else simple_init
-            # nonoverlap batching only reports a real detection every batch_stride frames;
+            # batching only reports a real detection every batch_stride frames;
             # give coast enough headroom to ride out that structural gap plus a few misses.
             self.max_coast = self._tracknet_coast() if max_coast is None else max_coast
         elif backend == "tracknet-onnx":
@@ -287,6 +289,18 @@ class ShuttleDetector:
         else:
             raise ValueError(f"Unknown backend {backend!r}, expected 'cv', 'tracknet' or 'tracknet-onnx'")
         self.backend = backend
+        # With all_heatmaps the source replays past frames: each call steps the tracker for the frame
+        # `frame_lag` calls ago, using the player boxes of THAT frame.
+        self._lagged = getattr(self._source, "lagged", False)
+        self.frame_lag = 0
+        self._calls = 0
+        self._box_hist = deque(maxlen=16)      # (call_idx, exclude_boxes, player_boxes) of recent calls
+        self.trajectory_first_call = None if self._lagged else 0     # call that trajectory[0] belongs to
+        # frames over which the physics filter measures velocities (see PHYSICS_CHORD_MIN_FRAMES)
+        self._chord_min_frames = 1 if backend == "cv" else config.PHYSICS_CHORD_MIN_FRAMES
+        self._stop_baseline_frames = 1 if backend == "cv" else config.PHYSICS_STOP_BASELINE_FRAMES
+        # TrackNet may look less often while no track is active (TrackNetCandidateSource.set_active)
+        self._adaptive = getattr(self._source, "idle_stride", 0) > getattr(self._source, "batch_stride", 0)
 
         self.max_candidates = max_candidates
         self.max_track_len = max_track_len
@@ -294,13 +308,18 @@ class ShuttleDetector:
         # Scale the Euclidean gate by the batch stride: between two detections the shuttle
         # travels stride frames' worth of distance. The physics filter then separates hits
         # from air drag.
-        stride = getattr(self._source, "batch_stride", 1)
+        stride = getattr(self._source, "frames_per_detection", getattr(self._source, "batch_stride", 1))
         self.min_gate_px = min_gate_px * max(1, stride)
+        # reach within which an unphysical candidate counts as the shuttle after a hit (see config)
+        self.hit_gate_px = self.min_gate_px * max(1, -(-config.PHYSICS_HIT_GATE_FRAMES // max(1, stride)))
 
         self.min_body_speed = min_body_speed
         self.init_max_residual = init_max_residual_px
         self.init_speed = init_speed_px
         self.init_min_confidence = init_min_confidence
+        if max_speed_ratio is None:        # a candidate on every frame needs a tighter ratio (see config)
+            max_speed_ratio = (config.KALMAN_MAX_SPEED_RATIO_PER_FRAME if getattr(self._source, "lagged", False)
+                               else config.KALMAN_MAX_SPEED_RATIO)
         self.max_speed_ratio = max_speed_ratio
         self.min_cos_angle = min_cos_angle
 
@@ -308,16 +327,23 @@ class ShuttleDetector:
         self.track_active = False
         self.misses = 0
         self.track_len = 0
-        self.flight_id = 0             # +1 every time a track starts, including restarts at a hit
-        self.start_source = None       # "physics" | "new": how the current track started
+        self.flight_id = 0             # +1 every time a flight starts (a "stop" restart continues the flight)
+        self.start_source = None       # "physics" | "stop" | "new": how the current track started
         self._recent_candidates = []   # candidate arrays of the last 2 frames, for track initiation
         self.trajectory = []           # one (x, y) or None per detect() call, full-frame pixels
         self.trajectory_meta = []      # parallel: (flight_id, start_source if a track started there) or (None, None)
         self.last_roi = None
 
+    def _boxes_of_call(self, call_idx, exclude_boxes, player_boxes):
+        """The boxes that were passed to detect() on call `call_idx` (the given ones if forgotten)."""
+        for c, ex, pl in reversed(self._box_hist):
+            if c == call_idx:
+                return ex, pl
+        return exclude_boxes, player_boxes
+
     def _tracknet_coast(self):
         """Coast (frames) for TrackNet backends: enough to ride out the batch stride."""
-        return max(config.TRACKNET_MIN_COAST, self._source.batch_stride + config.TRACKNET_COAST_MARGIN)
+        return max(config.TRACKNET_MIN_COAST, self._source.frames_per_detection + config.TRACKNET_COAST_MARGIN)
 
     @staticmethod
     def _in_boxes(pts, boxes, top_frac=0.0):
@@ -328,9 +354,14 @@ class ShuttleDetector:
             inside |= (pts[:, 0] >= x1) & (pts[:, 0] <= x2) & (pts[:, 1] >= top) & (pts[:, 1] <= y2)
         return inside
 
-    def _last_valid_point(self):
-        """(point, frames_ago) of the most recent detection within the look-back window."""
-        for k in range(1, min(config.PHYSICS_LOOKBACK_FRAMES, len(self.trajectory) + 1)):
+    def _reference_point(self, min_age=None):
+        """
+        (point, frames_ago) of the most recent detection that is at least `min_age` frames old
+        (default _chord_min_frames: candidates and the velocity before them are compared against
+        it, see PHYSICS_CHORD_MIN_FRAMES), within the look-back window; (None, 0) if there is none.
+        """
+        min_age = self._chord_min_frames if min_age is None else min_age
+        for k in range(min_age, min(config.PHYSICS_LOOKBACK_FRAMES, len(self.trajectory) + 1)):
             if self.trajectory[-k] is not None:
                 return np.array(self.trajectory[-k]), k
         return None, 0
@@ -341,29 +372,31 @@ class ShuttleDetector:
         come to rest (a landing, or a resting shuttle jittering on the floor): that is no racket
         hit, so it must not count as one nor end the flight.
         """
-        last_pt, dt = self._last_valid_point()
-        if last_pt is not None and np.linalg.norm(np.asarray(restart_pt) - last_pt) / dt <= config.PHYSICS_STOP_SPEED_PX:
+        ref_pt, dt = self._reference_point(self._stop_baseline_frames)
+        if ref_pt is not None and np.linalg.norm(np.asarray(restart_pt) - ref_pt) / dt <= config.PHYSICS_STOP_SPEED_PX:
             return "stop"
         return "physics"
 
     def _chord_velocity(self):
         """
-        Velocity (px/frame) between the two most recent detections of the CURRENT track, or None
-        if it has fewer than two. Measured, not filtered: with detections a TrackNet stride apart
-        the Kalman velocity is unreliable (its acceleration state soaks up the position
-        innovation; on real footage it pointed the wrong way on a shuttle falling to the floor).
+        Velocity (px/frame) of the CURRENT track up to its reference detection (_reference_point):
+        from the latest earlier detection at least _chord_min_frames before it. None if the track
+        has no such pair. With a detection every stride that is the last two detections. Measured,
+        not filtered: with detections a TrackNet stride apart the Kalman velocity is unreliable (its
+        acceleration state soaks up the position innovation; on real footage it pointed the wrong
+        way on a shuttle falling to the floor).
         """
-        first = max(0, len(self.trajectory) - 1 - self.track_len)   # index of the call that started this track
-        seen = []
-        for i in range(len(self.trajectory) - 1, first - 1, -1):
-            if self.trajectory[i] is not None:
-                seen.append(i)
-                if len(seen) == 2:
-                    break
-        if len(seen) < 2:
+        n = len(self.trajectory)
+        _, age = self._reference_point()
+        if age == 0:
             return None
-        i1, i0 = seen
-        return (np.array(self.trajectory[i1], dtype=float) - np.array(self.trajectory[i0], dtype=float)) / (i1 - i0)
+        i_ref = n - age
+        first = max(0, n - 1 - self.track_len)                      # index of the call that started this track
+        for i in range(i_ref - self._chord_min_frames, first - 1, -1):
+            if self.trajectory[i] is not None:
+                return (np.array(self.trajectory[i_ref], dtype=float)
+                        - np.array(self.trajectory[i], dtype=float)) / (i_ref - i)
+        return None
 
     def _physics_reject(self, cands):
         """
@@ -378,7 +411,7 @@ class ShuttleDetector:
         direction from.
         """
         reject = np.zeros(len(cands), dtype=bool)
-        last_pt, dt = self._last_valid_point()
+        last_pt, dt = self._reference_point()
         v_before = self._chord_velocity()
         if v_before is None or last_pt is None:
             return reject
@@ -444,6 +477,10 @@ class ShuttleDetector:
         Returns (point or None, a mask sized to the ROI for display -- the foreground mask
         for backend="cv", the most recently resolved heatmap for backend="tracknet").
 
+        With TrackNet's all_heatmaps mode the returned point belongs to the frame `frame_lag`
+        calls ago (0 until the first replay, then constant): consumers pass
+        `frame_idx - detector.frame_lag` as the frame of the point.
+
         Flight bookkeeping for consumers: `flight_id` increases every time a flight starts,
         including a restart in the same call that ended the previous track (a racket hit), where
         `track_active` stays True and so shows no edge. On the call that starts a track,
@@ -455,7 +492,18 @@ class ShuttleDetector:
           "new":     nothing to continue.
         """
         self.last_roi = roi
+        call_idx = self._calls
+        self._calls += 1
         cands, confs, mask = self._source.generate(frame, roi)
+        if self._lagged:
+            self._box_hist.append((call_idx, exclude_boxes, player_boxes))
+            emitted = self._source.emitted_call_idx
+            if emitted is None:
+                return None, mask           # nothing replayed yet (warm-up): the tracker does not move
+            exclude_boxes, player_boxes = self._boxes_of_call(emitted, exclude_boxes, player_boxes)
+            self.frame_lag = call_idx - emitted
+            if self.trajectory_first_call is None:
+                self.trajectory_first_call = emitted
 
         if len(cands) > self.max_candidates:
             # global change (camera shake, light flicker): no reliable measurement this frame
@@ -478,16 +526,18 @@ class ShuttleDetector:
                 d2 = self.kf.mahalanobis2(cands)
                 eucl = np.linalg.norm(cands - self.kf.x[:2], axis=1)
                 in_gate = (d2 <= config.KALMAN_CHI2_GATE) | (eucl <= self.min_gate_px)
+                hit_reach = eucl <= self.hit_gate_px
                 # a shuttle crossing a player's body is fast (just hit); slow blobs there are limbs
                 if np.linalg.norm(self.kf.x[2:4]) < self.min_body_speed:
                     in_gate &= ~on_body
+                    hit_reach &= ~on_body
 
                 physics_reject = self._physics_reject(cands)
                 # A candidate close enough to be the shuttle but breaking the laws of physics
                 # means the shuttle was hit: end the track so a new one can start. Only when no
                 # candidate fits the flight, though: with one that does, the unphysical blob is
                 # a distractor (a shoe, a racket frame) and the track goes on with the good one.
-                broke_physics = in_gate & physics_reject
+                broke_physics = (in_gate | hit_reach) & physics_reject
                 in_gate &= ~physics_reject
                 if broke_physics.any() and not in_gate.any():
                     self.track_active = False
@@ -537,10 +587,24 @@ class ShuttleDetector:
                         self.trajectory[-back] = (int(round(c[0])), int(round(c[1])))
 
         self._recent_candidates = (self._recent_candidates + [cands])[-2:]
+        if self._adaptive:
+            self._source.set_active(self.track_active)     # look less often while nothing is in play
         self.trajectory.append(best_pt)
         self.trajectory_meta.append((self.flight_id, self.start_source if self.track_len == 0 else None)
                                     if best_pt is not None else (None, None))
         return best_pt, mask
+
+    @property
+    def strides(self):
+        """(active, idle) frames between the candidate source's forward passes, or None for a source
+        without batches (the CV backend)."""
+        src = self._source
+        return (src.batch_stride, src.idle_stride) if hasattr(src, "idle_stride") else None
+
+    @property
+    def warmup_frames(self):
+        """detect() calls before the candidate source is in steady state (0 if it has no warm-up)."""
+        return getattr(self._source, "warmup_frames", 0)
 
     def fill_gaps(self, allowed=None, tail=None):
         """
@@ -556,20 +620,21 @@ class ShuttleDetector:
         start = 0 if tail is None else max(0, len(self.trajectory) - tail)
         dets = [gap_fill.Detection(i, self.trajectory[i], *self.trajectory_meta[i])
                 for i in range(start, len(self.trajectory)) if self.trajectory[i] is not None]
-        stride = getattr(self._source, "batch_stride", 1)
+        stride = getattr(self._source, "max_frames_between_detections", getattr(self._source, "batch_stride", 1))
         link = max(2, int(round(config.SHUTTLE_FILL_LINK_STRIDES * stride)))
         return gap_fill.fill_gaps(dets, allowed=allowed, max_link_frames=link)
 
-    def draw_trajectory(self, frame, tail_length=20):
-        """Trailing path of the shuttle: older segments thin and dark, newer ones thick and bright."""
-        annotated = frame.copy()
+    def draw_trajectory(self, frame, tail_length=20, copy=True):
+        """Trailing path of the shuttle: older segments thin and dark, newer ones thick and bright.
+        copy=False draws on `frame` itself (saves a full-frame copy, ~1.7 ms at 1080p)."""
+        annotated = frame.copy() if copy else frame
         recent_path = self.trajectory[-tail_length:]
         for i in range(1, len(recent_path)):
             pt1, pt2 = recent_path[i - 1], recent_path[i]
             if pt1 is None or pt2 is None:
                 continue
             t = i / tail_length
-            thickness = int(np.interp(t, [0, 1], [1, 4]))
+            thickness = int(1 + 3 * t)
             color = (0, int(80 + 175 * t), 255)
             cv2.line(annotated, pt1, pt2, color, thickness)
 

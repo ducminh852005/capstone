@@ -28,7 +28,8 @@ def main():
         if frame_idx > args.end:
             break
         pt, _ = detector.detect(frame, roi=roi)
-        hit = smash.update(frame_idx, pt, detector.track_active, detector.track_len, detector.kf.x[:2],
+        hit = smash.update(frame_idx - detector.frame_lag, pt, detector.track_active, detector.track_len,
+                           detector.kf.x[:2],
                            detector.start_source)
         if hit is not None:
             print(f"Track start at frame {hit.frame_idx} ({hit.source}): speed={hit.speed:.1f} "

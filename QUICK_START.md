@@ -32,10 +32,9 @@ Ensure you have the following installed on your system:
 3. (Optional) If dependencies are not installed, run:
    ```cmd
    pip install -r requirements.txt
-   pip install mediapipe
    ```
-4. Install PyTorch with CUDA (needed for `ShuttleDetector(backend="tracknet")`; not in
-   requirements.txt on purpose, see the comment there):
+4. Install PyTorch with CUDA (required: `core/tracknet.py` imports torch, so even the `cv` backend and
+   the tests need it; it is not in requirements.txt on purpose, see the comment there):
    ```cmd
    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
    ```
@@ -45,8 +44,9 @@ Ensure you have the following installed on your system:
      pip install gdown
      gdown "https://drive.google.com/uc?id=1CfzE87a0f6LhBp0kniSl1-89zaLCZ8cA" -O ckpts.zip
      tar -xf ckpts.zip ckpts/TrackNet_best.pt
-     move ckpts\TrackNet_best.pt backend\models\TrackNet_best.pt
+     move ckpts\TrackNet_best.pt models\TrackNet_best.pt
      ```
+     Run these from `backend/`, then delete `ckpts.zip` and `ckpts/` (both are git-ignored).
    - `yolov8n.pt` (Ultralytics YOLOv8 nano person detector): download `yolov8n.pt` from
      https://github.com/ultralytics/assets/releases and put it in `backend/models/`.
    - `pose_landmarker_lite.task` and `pose_landmarker_heavy.task` (MediaPipe Pose Landmarker):

@@ -1,0 +1,740 @@
+{
+  "video": "tran04_cam1.mp4",
+  "backend": "tracknet",
+  "tol": 30,
+  "all_heatmaps": true,
+  "results": {
+    "hits": {
+      "tp": [],
+      "fp": [
+        390,
+        421,
+        978,
+        1083,
+        1270,
+        1351,
+        1456,
+        1737,
+        1746,
+        1825,
+        1904,
+        1952,
+        2020,
+        2118,
+        2180,
+        2266,
+        2298,
+        2399,
+        2682,
+        2984,
+        3099,
+        3401,
+        3506,
+        3550,
+        3676,
+        4082,
+        4126,
+        4190,
+        4260,
+        4338,
+        4436,
+        4491,
+        4849,
+        5308,
+        5396,
+        5488,
+        5549,
+        5636,
+        5699,
+        5774,
+        5877,
+        6052,
+        6553,
+        6610,
+        6641
+      ],
+      "fn": [],
+      "precision": 0.0,
+      "recall": null,
+      "f1": null
+    },
+    "smashes": {
+      "tp": [],
+      "fp": [
+        390,
+        1456,
+        3550
+      ],
+      "fn": [],
+      "precision": 0.0,
+      "recall": null,
+      "f1": null
+    },
+    "landings": {
+      "tp": [
+        [
+          419,
+          423
+        ],
+        [
+          3099,
+          3121
+        ],
+        [
+          3676,
+          3691
+        ]
+      ],
+      "fp": [
+        1088,
+        1464,
+        2395,
+        2682,
+        3921,
+        4848,
+        6269,
+        6744
+      ],
+      "fn": [
+        90,
+        440,
+        466,
+        500,
+        1132,
+        1171,
+        1523,
+        2435,
+        2451,
+        2753,
+        4573,
+        5894,
+        6821
+      ],
+      "precision": 0.2727272727272727,
+      "recall": 0.1875,
+      "f1": 0.2222222222222222
+    }
+  },
+  "call_agreement": null,
+  "predictions": {
+    "hits": [
+      390,
+      421,
+      978,
+      1083,
+      1270,
+      1351,
+      1456,
+      1737,
+      1746,
+      1825,
+      1904,
+      1952,
+      2020,
+      2118,
+      2180,
+      2266,
+      2298,
+      2399,
+      2682,
+      2984,
+      3099,
+      3401,
+      3506,
+      3550,
+      3676,
+      4082,
+      4126,
+      4190,
+      4260,
+      4338,
+      4436,
+      4491,
+      4849,
+      5308,
+      5396,
+      5488,
+      5549,
+      5636,
+      5699,
+      5774,
+      5877,
+      6052,
+      6553,
+      6610,
+      6641
+    ],
+    "smashes": [
+      390,
+      1456,
+      3550
+    ],
+    "landings": [
+      {
+        "frame_idx": 419,
+        "result": "IN",
+        "half": "far",
+        "image_pt": [
+          1563,
+          640
+        ],
+        "world_pt": [
+          11.782,
+          3.586
+        ],
+        "margin_m": 1.638,
+        "close_call": false,
+        "method": "contact",
+        "uncertainty_m": 0.117
+      },
+      {
+        "frame_idx": 1088,
+        "result": "OUT",
+        "half": "far",
+        "image_pt": [
+          1773,
+          626
+        ],
+        "world_pt": [
+          15.194,
+          4.871
+        ],
+        "margin_m": -1.774,
+        "close_call": false,
+        "method": "resting",
+        "uncertainty_m": 0.156
+      },
+      {
+        "frame_idx": 1464,
+        "result": "OUT",
+        "half": "far",
+        "image_pt": [
+          1791,
+          663
+        ],
+        "world_pt": [
+          11.283,
+          5.837
+        ],
+        "margin_m": -0.177,
+        "close_call": false,
+        "method": "contact",
+        "uncertainty_m": 0.092
+      },
+      {
+        "frame_idx": 2395,
+        "result": "IN",
+        "half": "near",
+        "image_pt": [
+          739,
+          707
+        ],
+        "world_pt": [
+          2.694,
+          0.777
+        ],
+        "margin_m": 0.337,
+        "close_call": false,
+        "method": "contact",
+        "uncertainty_m": 0.048
+      },
+      {
+        "frame_idx": 2682,
+        "result": "IN",
+        "half": "far",
+        "image_pt": [
+          1294,
+          677
+        ],
+        "world_pt": [
+          7.095,
+          2.948
+        ],
+        "margin_m": 0.415,
+        "close_call": false,
+        "method": "contact",
+        "uncertainty_m": 0.067
+      },
+      {
+        "frame_idx": 3099,
+        "result": "OUT",
+        "half": "far",
+        "image_pt": [
+          1573,
+          626
+        ],
+        "world_pt": [
+          13.468,
+          3.117
+        ],
+        "margin_m": -0.048,
+        "close_call": true,
+        "method": "resting",
+        "uncertainty_m": 0.146
+      },
+      {
+        "frame_idx": 3676,
+        "result": "OUT",
+        "half": "near",
+        "image_pt": [
+          497,
+          716
+        ],
+        "world_pt": [
+          1.212,
+          -0.154
+        ],
+        "margin_m": -0.594,
+        "close_call": false,
+        "method": "contact_unconfirmed",
+        "uncertainty_m": 0.047
+      },
+      {
+        "frame_idx": 3921,
+        "result": "IN",
+        "half": "near",
+        "image_pt": [
+          1059,
+          702
+        ],
+        "world_pt": [
+          4.597,
+          2.354
+        ],
+        "margin_m": 1.914,
+        "close_call": false,
+        "method": "contact",
+        "uncertainty_m": 0.05
+      },
+      {
+        "frame_idx": 4848,
+        "result": "IN",
+        "half": "far",
+        "image_pt": [
+          1617,
+          700
+        ],
+        "world_pt": [
+          7.76,
+          5.389
+        ],
+        "margin_m": 0.271,
+        "close_call": false,
+        "method": "contact",
+        "uncertainty_m": 0.057
+      },
+      {
+        "frame_idx": 6269,
+        "result": "IN",
+        "half": "far",
+        "image_pt": [
+          1383,
+          660
+        ],
+        "world_pt": [
+          8.744,
+          2.965
+        ],
+        "margin_m": 2.064,
+        "close_call": false,
+        "method": "contact",
+        "uncertainty_m": 0.085
+      },
+      {
+        "frame_idx": 6744,
+        "result": "IN",
+        "half": "far",
+        "image_pt": [
+          1563,
+          636
+        ],
+        "world_pt": [
+          12.205,
+          3.439
+        ],
+        "margin_m": 1.215,
+        "close_call": false,
+        "method": "resting",
+        "uncertainty_m": 0.124
+      }
+    ],
+    "starts": [
+      {
+        "frame": 316,
+        "source": "new"
+      },
+      {
+        "frame": 390,
+        "source": "physics"
+      },
+      {
+        "frame": 421,
+        "source": "physics"
+      },
+      {
+        "frame": 480,
+        "source": "stop"
+      },
+      {
+        "frame": 900,
+        "source": "new"
+      },
+      {
+        "frame": 978,
+        "source": "physics"
+      },
+      {
+        "frame": 1075,
+        "source": "new"
+      },
+      {
+        "frame": 1083,
+        "source": "physics"
+      },
+      {
+        "frame": 1112,
+        "source": "stop"
+      },
+      {
+        "frame": 1259,
+        "source": "new"
+      },
+      {
+        "frame": 1270,
+        "source": "physics"
+      },
+      {
+        "frame": 1351,
+        "source": "physics"
+      },
+      {
+        "frame": 1456,
+        "source": "physics"
+      },
+      {
+        "frame": 1477,
+        "source": "new"
+      },
+      {
+        "frame": 1496,
+        "source": "stop"
+      },
+      {
+        "frame": 1723,
+        "source": "new"
+      },
+      {
+        "frame": 1737,
+        "source": "physics"
+      },
+      {
+        "frame": 1746,
+        "source": "physics"
+      },
+      {
+        "frame": 1795,
+        "source": "new"
+      },
+      {
+        "frame": 1825,
+        "source": "physics"
+      },
+      {
+        "frame": 1904,
+        "source": "physics"
+      },
+      {
+        "frame": 1938,
+        "source": "new"
+      },
+      {
+        "frame": 1952,
+        "source": "physics"
+      },
+      {
+        "frame": 1976,
+        "source": "new"
+      },
+      {
+        "frame": 2020,
+        "source": "physics"
+      },
+      {
+        "frame": 2037,
+        "source": "new"
+      },
+      {
+        "frame": 2082,
+        "source": "new"
+      },
+      {
+        "frame": 2118,
+        "source": "physics"
+      },
+      {
+        "frame": 2135,
+        "source": "new"
+      },
+      {
+        "frame": 2180,
+        "source": "physics"
+      },
+      {
+        "frame": 2266,
+        "source": "physics"
+      },
+      {
+        "frame": 2298,
+        "source": "physics"
+      },
+      {
+        "frame": 2399,
+        "source": "physics"
+      },
+      {
+        "frame": 2426,
+        "source": "stop"
+      },
+      {
+        "frame": 2440,
+        "source": "stop"
+      },
+      {
+        "frame": 2547,
+        "source": "new"
+      },
+      {
+        "frame": 2638,
+        "source": "stop"
+      },
+      {
+        "frame": 2682,
+        "source": "physics"
+      },
+      {
+        "frame": 2703,
+        "source": "stop"
+      },
+      {
+        "frame": 2755,
+        "source": "new"
+      },
+      {
+        "frame": 2884,
+        "source": "new"
+      },
+      {
+        "frame": 2901,
+        "source": "new"
+      },
+      {
+        "frame": 2950,
+        "source": "new"
+      },
+      {
+        "frame": 2984,
+        "source": "physics"
+      },
+      {
+        "frame": 3091,
+        "source": "new"
+      },
+      {
+        "frame": 3099,
+        "source": "physics"
+      },
+      {
+        "frame": 3387,
+        "source": "new"
+      },
+      {
+        "frame": 3401,
+        "source": "physics"
+      },
+      {
+        "frame": 3458,
+        "source": "new"
+      },
+      {
+        "frame": 3506,
+        "source": "physics"
+      },
+      {
+        "frame": 3550,
+        "source": "physics"
+      },
+      {
+        "frame": 3632,
+        "source": "new"
+      },
+      {
+        "frame": 3676,
+        "source": "physics"
+      },
+      {
+        "frame": 3891,
+        "source": "new"
+      },
+      {
+        "frame": 3924,
+        "source": "stop"
+      },
+      {
+        "frame": 3946,
+        "source": "stop"
+      },
+      {
+        "frame": 4051,
+        "source": "new"
+      },
+      {
+        "frame": 4082,
+        "source": "physics"
+      },
+      {
+        "frame": 4099,
+        "source": "new"
+      },
+      {
+        "frame": 4126,
+        "source": "physics"
+      },
+      {
+        "frame": 4190,
+        "source": "physics"
+      },
+      {
+        "frame": 4260,
+        "source": "physics"
+      },
+      {
+        "frame": 4278,
+        "source": "new"
+      },
+      {
+        "frame": 4338,
+        "source": "physics"
+      },
+      {
+        "frame": 4400,
+        "source": "stop"
+      },
+      {
+        "frame": 4436,
+        "source": "physics"
+      },
+      {
+        "frame": 4491,
+        "source": "physics"
+      },
+      {
+        "frame": 4742,
+        "source": "new"
+      },
+      {
+        "frame": 4849,
+        "source": "physics"
+      },
+      {
+        "frame": 4880,
+        "source": "stop"
+      },
+      {
+        "frame": 5178,
+        "source": "new"
+      },
+      {
+        "frame": 5299,
+        "source": "new"
+      },
+      {
+        "frame": 5308,
+        "source": "physics"
+      },
+      {
+        "frame": 5396,
+        "source": "physics"
+      },
+      {
+        "frame": 5488,
+        "source": "physics"
+      },
+      {
+        "frame": 5549,
+        "source": "physics"
+      },
+      {
+        "frame": 5636,
+        "source": "physics"
+      },
+      {
+        "frame": 5699,
+        "source": "physics"
+      },
+      {
+        "frame": 5715,
+        "source": "new"
+      },
+      {
+        "frame": 5774,
+        "source": "physics"
+      },
+      {
+        "frame": 5867,
+        "source": "new"
+      },
+      {
+        "frame": 5877,
+        "source": "physics"
+      },
+      {
+        "frame": 6035,
+        "source": "new"
+      },
+      {
+        "frame": 6052,
+        "source": "physics"
+      },
+      {
+        "frame": 6074,
+        "source": "new"
+      },
+      {
+        "frame": 6148,
+        "source": "stop"
+      },
+      {
+        "frame": 6202,
+        "source": "new"
+      },
+      {
+        "frame": 6269,
+        "source": "stop"
+      },
+      {
+        "frame": 6539,
+        "source": "new"
+      },
+      {
+        "frame": 6553,
+        "source": "physics"
+      },
+      {
+        "frame": 6610,
+        "source": "physics"
+      },
+      {
+        "frame": 6641,
+        "source": "physics"
+      },
+      {
+        "frame": 6739,
+        "source": "new"
+      },
+      {
+        "frame": 6748,
+        "source": "stop"
+      }
+    ]
+  }
+}

@@ -32,7 +32,7 @@ from core.video_io import ThreadedVideoReader
 TAIL_FRAMES = 60    # keep running this long after the last label so the last flight can end
 
 
-def run_pipeline(video, end_frame, backend, use_players):
+def run_pipeline(video, end_frame, backend, use_players, all_heatmaps=False):
     """Returns {"hits": [frame], "smashes": [frame], "landings": [Call dict], "starts": [...]}."""
     H, H_inv = court_model.load_calibration()
     if H is None:
@@ -40,14 +40,14 @@ def run_pipeline(video, end_frame, backend, use_players):
     reader = ThreadedVideoReader(video)
     w, h = reader.size
     roi = court_model.shuttle_roi(H, (h, w))
-    detector = _common.create_detector(backend)
+    detector = _common.create_detector(backend, tracknet_kwargs={"all_heatmaps": True} if all_heatmaps else None)
     umpire = RallyUmpire(H_inv, match_type=match_type_from_metadata(video), frame_size=(h, w), roi=roi,
                          net_top_y=court_model.net_top_threshold_y(H))
     smash = SmashDetector()
     tracker = None
     if use_players:
         from core.player_tracker import PlayerTracker
-        tracker = PlayerTracker(conf_thresh=config.PLAYER_DEMO_YOLO_CONF, fps=reader.fps, yolo_every=3)
+        tracker = PlayerTracker(conf_thresh=config.PLAYER_DEMO_YOLO_CONF, fps=reader.fps)
 
     out = {"hits": [], "smashes": [], "landings": [], "starts": []}
     for frame_idx, frame in reader:
@@ -58,15 +58,16 @@ def run_pipeline(video, end_frame, backend, use_players):
             frame, roi=roi,
             exclude_boxes=tracker.non_player_boxes(players) if tracker else None,
             player_boxes=[p.bbox for p in players.values()] if tracker else None)
+        shuttle_frame = frame_idx - detector.frame_lag      # the point belongs to an earlier frame in all-heatmaps mode
         if detector.track_active and detector.track_len == 0:
-            out["starts"].append({"frame": frame_idx, "source": detector.start_source})
+            out["starts"].append({"frame": shuttle_frame, "source": detector.start_source})
             if detector.start_source == "physics":
-                out["hits"].append(frame_idx)
-        measured = smash.update(frame_idx, pt, detector.track_active, detector.track_len,
+                out["hits"].append(shuttle_frame)
+        measured = smash.update(shuttle_frame, pt, detector.track_active, detector.track_len,
                                 detector.kf.x[:2], detector.start_source)
         if measured is not None and measured.is_smash:
             out["smashes"].append(measured.frame_idx)
-        call = umpire.update(frame_idx, pt, detector.track_active,
+        call = umpire.update(shuttle_frame, pt, detector.track_active,
                              people_boxes=list(tracker.last_boxes) if tracker else None,
                              flight_id=detector.flight_id)
         if call is not None:
@@ -95,6 +96,8 @@ def main():
     ap.add_argument("--tol", type=int, default=12, help="match tolerance in frames (default 12)")
     ap.add_argument("--backend", default=config.DEFAULT_BACKEND)
     ap.add_argument("--players", action="store_true", help="also run player tracking (slower)")
+    ap.add_argument("--all-heatmaps", action="store_true",
+                    help="use every heatmap of a TrackNet pass (detections for every frame, 7 frames late)")
     ap.add_argument("--out", default=None, help="save the report as data/benchmarks/events_<OUT>.json")
     args = ap.parse_args()
 
@@ -106,7 +109,8 @@ def main():
     if not all_frames:
         raise SystemExit(f"{events_path} has no labelled events yet; fill in hits/smashes/landings first.")
 
-    pred = run_pipeline(args.video, max(all_frames) + TAIL_FRAMES, args.backend, args.players)
+    pred = run_pipeline(args.video, max(all_frames) + TAIL_FRAMES + (7 if args.all_heatmaps else 0),
+                        args.backend, args.players, args.all_heatmaps)
 
     print(f"\nvideo={os.path.basename(args.video)} backend={args.backend} tol=+-{args.tol} frames\n")
     results = {}
@@ -131,6 +135,7 @@ def main():
         path = config.BENCHMARK_DIR / f"events_{args.out}.json"
         with open(path, "w", encoding="utf-8") as f:
             json.dump({"video": os.path.basename(args.video), "backend": args.backend, "tol": args.tol,
+                       "all_heatmaps": args.all_heatmaps,
                        "results": results, "call_agreement": agreement, "predictions": pred}, f, indent=2)
         print(f"\nSaved -> {path}")
 

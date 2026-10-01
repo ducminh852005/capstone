@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 
 class TrackNetONNXCandidateSource(TrackNetCandidateSource):
     def __init__(self, weights_path=None, onnx_path=None, batch_stride=None,
-                 conf_threshold=config.TRACKNET_CONF_THRESHOLD, bg_frames=config.TRACKNET_BG_FRAMES):
+                 conf_threshold=config.TRACKNET_CONF_THRESHOLD, bg_frames=config.TRACKNET_BG_FRAMES,
+                 idle_stride=None):
         """
         weights_path: path to TrackNet_best.pt, read only for its param_dict (seq_len,
                       bg_mode) -- no PyTorch model is built or run.
@@ -66,7 +67,7 @@ class TrackNetONNXCandidateSource(TrackNetCandidateSource):
         self._input_name = self.session.get_inputs()[0].name
         logger.info("TrackNet ONNX backend using providers: %s", self.session.get_providers())
 
-        self._init_state(batch_stride, conf_threshold, bg_frames)
+        self._init_state(batch_stride, conf_threshold, bg_frames, idle_stride, all_heatmaps=False)
 
     def _background_from_median(self, chw):
         """Keep a plain float32 ndarray (no torch/device) for ONNX Runtime."""

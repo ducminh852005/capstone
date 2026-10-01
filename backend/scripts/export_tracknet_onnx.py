@@ -15,7 +15,7 @@ import sys
 import numpy as np
 import torch
 
-import _common  # noqa: F401  (puts backend/ on sys.path)
+import _common
 from core import config
 from core.tracknet import load_checkpoint
 from core.tracknet_model import TrackNet, WIDTH, HEIGHT, in_dim_for
@@ -68,4 +68,5 @@ def main():
 
 
 if __name__ == "__main__":
+    _common.setup_logging()
     main()

@@ -27,7 +27,7 @@ def generate_highlights(video_path, shuttle_backend=config.DEFAULT_BACKEND, outp
 
     detector = create_detector(shuttle_backend)
 
-    tracker = PlayerTracker(conf_thresh=config.PLAYER_DEMO_YOLO_CONF, fps=fps, yolo_every=3)
+    tracker = PlayerTracker(conf_thresh=config.PLAYER_DEMO_YOLO_CONF, fps=fps)
     umpire = RallyUmpire(H_inv, match_type=match_type, frame_size=(h, w), roi=roi,
                          net_top_y=court_model.net_top_threshold_y(H))
 
@@ -60,7 +60,7 @@ def generate_highlights(video_path, shuttle_backend=config.DEFAULT_BACKEND, outp
 
         # The speed after a hit is measured on the first two real detections of the new track
         # (right after the restart the Kalman velocity is still zero).
-        measured = smash.update(frame_idx, pt, detector.track_active, detector.track_len,
+        measured = smash.update(frame_idx - detector.frame_lag, pt, detector.track_active, detector.track_len,
                                 detector.kf.x[:2], detector.start_source)
         if measured is not None and measured.source == "physics":
             world_pt = court_model.img_to_world([measured.pt], H_inv)[0]
@@ -71,7 +71,8 @@ def generate_highlights(video_path, shuttle_backend=config.DEFAULT_BACKEND, outp
                     'speed': measured.speed
                 })
 
-        call = umpire.update(frame_idx, pt, detector.track_active, people_boxes=list(tracker.last_boxes),
+        call = umpire.update(frame_idx - detector.frame_lag, pt, detector.track_active,
+                             people_boxes=list(tracker.last_boxes),
                              flight_id=detector.flight_id)
         if call is not None:
             # Rally ended

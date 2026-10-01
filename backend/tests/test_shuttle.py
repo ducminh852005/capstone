@@ -310,3 +310,115 @@ def test_chord_velocity_ignores_points_of_earlier_tracks():
     det.track_len = 15
     v = det._chord_velocity()
     assert v is not None and np.allclose(v, np.array([45.0, 42.0]) / 8.0)
+
+
+def test_draw_trajectory_can_draw_in_place():
+    det = ShuttleDetector(backend="cv")
+    det.trajectory = [(10, 10), (20, 20), (30, 25), (40, 25)]
+    frame = np.zeros((60, 60, 3), np.uint8)
+    out = det.draw_trajectory(frame)
+    assert out is not frame and frame.sum() == 0 and out.sum() > 0
+    same = det.draw_trajectory(frame, copy=False)
+    assert same is frame and frame.sum() > 0
+    assert np.array_equal(same, out)               # same picture either way
+
+
+# --- lagged (all_heatmaps) sources: the tracker steps once per replayed frame ---------------------
+
+class LaggedSource:
+    """Stands in for TrackNetCandidateSource(all_heatmaps=True): replays scripted frames `lag` calls late."""
+
+    lagged = True
+    frames_per_detection = 1
+    max_frames_between_detections = 1
+    batch_stride = 8
+    idle_stride = 8
+    seq_len = 8
+
+    def __init__(self, script, lag=7):
+        self.script, self.lag, self.calls = script, lag, 0     # script: {frame: [(x, y, conf), ...]}
+        self.emitted_call_idx = None
+
+    def generate(self, frame, roi):
+        call, self.calls = self.calls, self.calls + 1
+        frame_of = call - self.lag
+        mask = np.zeros((4, 4), np.uint8)
+        if frame_of < 0:
+            self.emitted_call_idx = None
+            return np.empty((0, 2)), np.empty((0,)), mask
+        self.emitted_call_idx = frame_of
+        rows = self.script.get(frame_of, [])
+        cands = np.array([r[:2] for r in rows], float).reshape(-1, 2)
+        return cands, np.array([r[2] for r in rows], float), mask
+
+
+def lagged_detector(script, lag=7):
+    det = ShuttleDetector(backend="cv", simple_init=True)
+    det._source = LaggedSource(script, lag)
+    det._lagged = True
+    det._chord_min_frames = 4
+    det._stop_baseline_frames = 2
+    det.min_gate_px = 15.0
+    det.max_coast = 12
+    return det
+
+
+BLANK = np.zeros((10, 10, 3), np.uint8)
+
+
+def test_lagged_detector_does_not_move_until_the_first_replay_and_reports_the_lag():
+    det = lagged_detector({0: [(100.0, 100.0, 0.9)]})
+    for _ in range(7):
+        pt, _ = det.detect(BLANK)
+        assert pt is None and det.trajectory == [] and det.frame_lag == 0 and not det.track_active
+    pt, _ = det.detect(BLANK)                               # call 7 replays frame 0
+    assert pt == (100, 100) and det.track_active
+    assert det.frame_lag == 7 and det.trajectory_first_call == 0 and len(det.trajectory) == 1
+
+
+def test_lagged_detector_follows_a_flight_one_step_per_replayed_frame():
+    script = {f: [(100.0 + 10 * f, 300.0 - 4 * f, 0.9)] for f in range(30)}
+    det = lagged_detector(script)
+    pts = [det.detect(BLANK)[0] for _ in range(37)]         # 30 replayed frames + 7 warm-up calls
+    assert pts[:7] == [None] * 7
+    assert pts[7:] == [(100 + 10 * f, 300 - 4 * f) for f in range(30)]
+    assert len(det.trajectory) == 30 and det.flight_id == 1 and det.track_len == 29
+
+
+def test_lagged_detector_uses_the_player_boxes_of_the_replayed_frame():
+    script = {0: [(500.0, 500.0, 0.9)]}
+    body = [(450, 300, 550, 600)]           # the candidate sits in the legs/torso zone of this box
+    on_frame_0 = lagged_detector(script)
+    on_frame_0.detect(BLANK, player_boxes=body)             # call 0: the player is there when frame 0 is shot
+    for _ in range(6):
+        on_frame_0.detect(BLANK, player_boxes=None)
+    pt, _ = on_frame_0.detect(BLANK, player_boxes=None)     # call 7 replays frame 0: it was on the body
+    assert pt is None and not on_frame_0.track_active
+
+    only_now = lagged_detector(script)
+    for _ in range(7):
+        only_now.detect(BLANK, player_boxes=None)
+    pt, _ = only_now.detect(BLANK, player_boxes=body)       # a box that appeared only at call 7 is irrelevant
+    assert pt == (500, 500) and only_now.track_active
+
+
+def test_lagged_detector_still_recognises_a_hit_from_per_frame_detections():
+    right = {f: [(100.0 + 10 * f, 300.0, 0.9)] for f in range(12)}
+    left = {f: [(210.0 - 10 * (f - 11), 300.0, 0.9)] for f in range(12, 24)}      # reverses after frame 11
+    det = lagged_detector({**right, **left})
+    for _ in range(31):
+        det.detect(BLANK)
+    assert det.flight_id == 2 and det.start_source == "physics"
+    assert len(det.trajectory) == 24
+
+
+def test_lag_defaults_to_zero_for_a_normal_source():
+    det = ShuttleDetector(backend="cv")
+    assert det.frame_lag == 0 and det.trajectory_first_call == 0 and not det._lagged
+
+
+def test_detector_strides_property():
+    assert ShuttleDetector(backend="cv").strides is None
+    det = ShuttleDetector(backend="cv")
+    det._source = LaggedSource({})
+    assert det.strides == (8, 8)

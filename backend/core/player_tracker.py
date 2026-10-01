@@ -180,7 +180,7 @@ class PlayerTracker:
         except ImportError:
             cuda = False
         self.device = device if device is not None else (0 if cuda else "cpu")
-        self.half = half if half is not None else cuda
+        self.half = half if half is not None else (cuda and config.PLAYER_YOLO_HALF)
 
         self.pose_estimator = PoseEstimator(variant=pose_variant)
         self.pose_every = max(int(pose_every), 1)
@@ -220,10 +220,11 @@ class PlayerTracker:
         res = self.track_frame(frame, persist=True)
         if res.boxes.id is None:
             return np.empty((0, 4), np.float32), np.empty((0,), np.int64)
-        boxes = res.boxes.xyxy.cpu().numpy()
+        data = res.boxes.data.cpu().numpy()       # one transfer: x1, y1, x2, y2, track id, conf, class
+        boxes = data[:, :4].copy()
         boxes[:, [0, 2]] += x0
         boxes[:, [1, 3]] += y0
-        return boxes, res.boxes.id.cpu().numpy().astype(np.int64)
+        return boxes, data[:, 4].astype(np.int64)
 
     def roi_for(self, H, frame_shape):
         if H is None:
@@ -253,8 +254,8 @@ class PlayerTracker:
 
     def non_player_boxes(self, players):
         """Boxes of every person tracked in the last frame who is not a selected player."""
-        return [tuple(b) for b in self.last_boxes
-                if not any(np.allclose(b, p.bbox) for p in players.values())]
+        player_tracks = {p.track_id for p in players.values()}
+        return [tuple(b) for b, tid in zip(self.last_boxes, self.last_ids) if int(tid) not in player_tracks]
 
     def update(self, frame, frame_idx, boxes, ids, H_inv):
         """
@@ -308,9 +309,10 @@ class PlayerTracker:
         self._detect_calls += 1
         return self.update(frame, frame_idx, self.last_boxes, self.last_ids, H_inv)
 
-    def draw_tracking(self, frame, players):
-        """Bounding box, player/track id and foot point for each selected player."""
-        annotated_frame = frame.copy()
+    def draw_tracking(self, frame, players, copy=True):
+        """Bounding box, player/track id and foot point for each selected player.
+        copy=False draws on `frame` itself (saves a full-frame copy, ~1.7 ms at 1080p)."""
+        annotated_frame = frame.copy() if copy else frame
         for pid, p in players.items():
             x1, y1, x2, y2 = (int(v) for v in p.bbox)
             cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)

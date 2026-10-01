@@ -12,18 +12,18 @@ way, i.e. ~9.7 FPS dense vs ~77 FPS nonoverlap (see scripts/bench_tracknet_forwa
 An earlier FP16 measurement on this same GPU showed 364 ms/window -- FP16 was both
 ~3.5x SLOWER (this GPU has no real FP16 throughput advantage) and numerically unsafe
 (see `use_half`), so it is no longer the default; do not compare FP16 and FP32 timings
-as a speed/accuracy tradeoff, FP32 wins both. We default to nonoverlap for throughput,
-but expose batch_stride because nonoverlap's 1-in-8 detection rate is too coarse for
-RallyUmpire's landing-rest detection (it needs to see the shuttle slow down over a
-couple of consecutive frames, which nonoverlap mostly skips over); a smaller stride
-such as 2-4 recovers temporal resolution at a proportional GPU cost.
+as a speed/accuracy tradeoff, FP32 wins both. The default stride is
+config.TRACKNET_BATCH_STRIDE (5): nonoverlap's 1-in-8 detection rate is too coarse for
+RallyUmpire's landing detection (it needs to see the shuttle slow down over a couple of
+consecutive detections, which nonoverlap mostly skips over), and a smaller stride
+recovers temporal resolution at a proportional GPU cost.
 
 Whatever the stride, `generate()` only has fresh candidates on the calls where a batch
 resolves; the other calls return empty arrays. This is deliberately compatible with
 the existing ShuttleDetector.detect() loop: an empty candidate array makes the Kalman
 filter coast (predict-only), which it already does for ordinary missed detections,
-and offline gap-filling (`fill_missing_trajectory`) already smooths gaps well under
-its default max_gap_frames=15. The one place this needed a real design decision is
+and the frames without a detection are estimated afterwards by core/gap_fill.py
+(ShuttleDetector.fill_gaps). The one place this needed a real design decision is
 track *initiation*: the CV backend's 3-consecutive-frame consistency check assumes
 candidates every frame, which never happens here at batch_stride>1. Since TrackNetV3
 candidates are already high precision (a purpose-trained detector, not a generic blob
@@ -121,9 +121,14 @@ class TrackNetCandidateSource:
     def __init__(self, weights_path=None, device=None, batch_stride=None,
                  conf_threshold=config.TRACKNET_CONF_THRESHOLD,
                  bg_frames=config.TRACKNET_BG_FRAMES,
-                 use_half=False):
+                 use_half=False, idle_stride=None, all_heatmaps=None):
         """
+        all_heatmaps: decode every heatmap of a forward pass, not just the newest (default
+            config.TRACKNET_ALL_HEATMAPS). Needs batch_stride == seq_len. generate() then replays
+            the frames one per call, seq_len - 1 calls late (see `emitted_call_idx`).
         weights_path: path to TrackNet_best.pt (see QUICK_START.md for the download step).
+        idle_stride: stride while no shuttle track is active (see set_active); None =
+                     config.TRACKNET_IDLE_STRIDE, or batch_stride itself if that was given.
         batch_stride: how many new frames arrive between forward passes; None =
                       config.TRACKNET_BATCH_STRIDE (5), or seq_len from the checkpoint if that
                       is 0 (nonoverlap batching -- the fastest, but only 1-in-seq_len frames get
@@ -163,11 +168,27 @@ class TrackNetCandidateSource:
         if self.device.type == "cuda":
             torch.backends.cudnn.benchmark = True
 
-        self._init_state(batch_stride, conf_threshold, bg_frames)
+        self._init_state(batch_stride, conf_threshold, bg_frames, idle_stride, all_heatmaps)
 
-    def _init_state(self, batch_stride, conf_threshold, bg_frames):
+    def _init_state(self, batch_stride, conf_threshold, bg_frames, idle_stride=None, all_heatmaps=None):
         """Runtime-independent state; needs self.seq_len and self.bg_mode to be set already."""
         self.batch_stride = batch_stride or config.TRACKNET_BATCH_STRIDE or self.seq_len
+        # Adaptive stride: batch_stride is the stride while a shuttle track is active, idle_stride
+        # the one while there is none (set_active()). An explicit batch_stride is taken literally.
+        if idle_stride is None:
+            idle_stride = config.TRACKNET_IDLE_STRIDE if batch_stride is None else batch_stride
+        self.idle_stride = max(self.batch_stride, idle_stride or 0)
+        self.all_heatmaps = config.TRACKNET_ALL_HEATMAPS if all_heatmaps is None else all_heatmaps
+        if self.all_heatmaps:
+            if batch_stride not in (None, 0, self.seq_len):
+                raise ValueError(f"all_heatmaps needs batch_stride == seq_len ({self.seq_len}), got {batch_stride}")
+            self.batch_stride = self.idle_stride = self.seq_len     # windows must not overlap
+        self._stride_now = self.batch_stride       # standalone use never calls set_active: no change
+        # all_heatmaps replay: (call_idx, candidates, confidences, mask) of the frames whose heatmaps
+        # were already computed but not yet handed out, and the frame handed out by the last call
+        self._replay = deque()
+        self.emitted_call_idx = None
+        self._calls = 0
         self.conf_threshold = conf_threshold
         self.needs_bg = bool(self.bg_mode)
         self.bg_frames_needed = bg_frames
@@ -203,6 +224,33 @@ class TrackNetCandidateSource:
         t = torch.from_numpy(chw).to(self.device)
         return t.half() if self.use_half else t
 
+    def set_active(self, active):
+        """Tell the source whether a shuttle track is running: forward passes come every
+        batch_stride frames then, every idle_stride frames otherwise."""
+        self._stride_now = self.batch_stride if active else self.idle_stride
+
+    @property
+    def lagged(self):
+        """True when generate() replays past frames (all_heatmaps): the candidates it returns
+        belong to call `emitted_call_idx`, not to the current call."""
+        return self.all_heatmaps
+
+    @property
+    def frames_per_detection(self):
+        """Typical frames between two detections of a shuttle in flight (1 when all heatmaps are used)."""
+        return 1 if self.all_heatmaps else self.batch_stride
+
+    @property
+    def max_frames_between_detections(self):
+        """Longest gap (frames) between two detections of a shuttle in flight."""
+        return 1 if self.all_heatmaps else self.idle_stride
+
+    @property
+    def warmup_frames(self):
+        """Calls before the steady state: background frames, then a full window plus one stride
+        (the first forward pass also pays cudnn autotuning, ~3 s, so timings must skip it)."""
+        return (self.bg_frames_needed if self.needs_bg else 0) + self.seq_len + self.idle_stride
+
     def ready(self):
         return not self.needs_bg or self._bg_tensor is not None
 
@@ -218,24 +266,49 @@ class TrackNetCandidateSource:
             roi = (0, 0, frame.shape[1], frame.shape[0])
         x0, y0, x1, y1 = roi
         roi_w, roi_h = x1 - x0, y1 - y0
+        call_idx = self._calls
+        self._calls += 1
         crop = frame[y0:y1, x0:x1]
         resized = self._prep_frame(crop) if crop.size else np.zeros((HEIGHT, WIDTH, 3), np.uint8)
 
         if self.needs_bg and not self._ensure_background(resized):
-            return np.empty((0, 2)), np.empty((0,)), self._mask_for(roi_w, roi_h)
+            return self._nothing(roi_w, roi_h)
 
         self._window.append(resized)
         self._since_last_run += 1
-        if len(self._window) < self.seq_len or self._since_last_run < self.batch_stride:
-            return np.empty((0, 2)), np.empty((0,)), self._mask_for(roi_w, roi_h)
+        if len(self._window) >= self.seq_len and self._since_last_run >= self._stride_now:
+            if self.all_heatmaps:
+                self._queue_all_frames(call_idx, roi)
+            else:
+                cands, confs, heat = self._run_batch()
+                self._since_last_run = 0
+                self._last_mask = (heat > self.conf_threshold).astype(np.uint8) * 255
+                self._mask_cache = None
+                return scale_candidates(cands, roi), confs, self._mask_for(roi_w, roi_h)
+        if self.all_heatmaps and self._replay:
+            idx, cands, confs, mask = self._replay.popleft()
+            self.emitted_call_idx = idx
+            self._last_mask, self._mask_cache = mask, None
+            return cands, confs, self._mask_for(roi_w, roi_h)
+        return self._nothing(roi_w, roi_h)
 
-        cands, confs, heat = self._run_batch()
+    def _nothing(self, roi_w, roi_h):
+        """No candidates on this call (warm-up, between batches, or nothing left to replay)."""
+        self.emitted_call_idx = None
+        return np.empty((0, 2)), np.empty((0,)), self._mask_for(roi_w, roi_h)
+
+    def _queue_all_frames(self, call_idx, roi):
+        """One forward pass -> the candidates of all seq_len frames of the window, queued for replay.
+        The window holds the last seq_len calls, so frame k of the output is call call_idx - seq_len + 1 + k."""
+        results = self._run_batch_all()
         self._since_last_run = 0
-        self._last_mask = (heat > self.conf_threshold).astype(np.uint8) * 255
-        self._mask_cache = None
-        return scale_candidates(cands, roi), confs, self._mask_for(roi_w, roi_h)
+        first_call = call_idx - self.seq_len + 1
+        for k, (cands, confs, heat) in enumerate(results):
+            mask = (heat > self.conf_threshold).astype(np.uint8) * 255
+            self._replay.append((first_call + k, scale_candidates(cands, roi), confs, mask))
 
-    def _run_batch(self):
+    def _forward(self):
+        """Run the network on the current window: heatmaps (1, seq_len, H, W), oldest frame first."""
         frames = np.stack(self._window, axis=0)                             # (seq_len, H, W, 3) uint8
         # The uint8 frames go to the device and are converted there (4x less to transfer, no
         # float32 pass on the CPU: ~13 ms -> ~1.5 ms per batch). Dividing by a TENSOR is
@@ -251,10 +324,23 @@ class TrackNetCandidateSource:
             x = x.half()
 
         with torch.no_grad():
-            y = self.model(x)                        # (1, seq_len, H, W)
+            return self.model(x)                     # (1, seq_len, H, W)
+
+    def _run_batch(self):
+        """Candidates of the NEWEST frame of the window: (candidates, confidences, heatmap)."""
+        y = self._forward()
         # Only the newest frame in the batch corresponds to "now"; the earlier
         # seq_len-1 heatmaps were for frames already returned (empty) to the caller.
         heat = y[0, -1].float().cpu().numpy()
+        return self._decode(heat)
+
+    def _run_batch_all(self):
+        """[(candidates, confidences, heatmap)] for every frame of the window, oldest first."""
+        heats = self._forward()[0].float().cpu().numpy()       # (seq_len, H, W)
+        return [self._decode(h) for h in heats]
+
+    def _decode(self, heat):
+        """Heatmap -> (candidates, confidences, heatmap); a non-finite map counts as no detection."""
         if not np.isfinite(heat).all():
             # Defensive fallback, expected to be rare now that use_half defaults to False
             # (with FP16 on this project's GPU this fired on ~80% of batches -- see

@@ -12,11 +12,12 @@ Controls:
 import sys
 
 import cv2
+import numpy as np
 
 # Shared utilities (also sets up sys.path)
 from _common import (
-    create_detector, load_video_and_calibration, setup_logging,
-    draw_shuttle_trajectory, draw_court_overlay, draw_bounce_markers, Minimap,
+    create_detector, load_video_and_calibration, setup_logging, setup_gui,
+    draw_shuttle_trajectory, draw_court_overlay, court_overlay_segments, draw_bounce_markers, Minimap,
     LiveTuner,
 )
 from core import config, court_model, gap_fill
@@ -40,19 +41,17 @@ def run_trajectory(video_path, backend=DEFAULT_BACKEND):
     umpire = None
     if H_inv is not None:
         w, h = reader.size
-        stride = getattr(detector._source, 'batch_stride', 15) if hasattr(detector, '_source') else 15
-        rest_frm = 3 if stride < 15 else 2
-
         umpire = RallyUmpire(H_inv=H_inv, match_type=match_type_from_metadata(video_path),
                              frame_size=(h, w), roi=roi,
-                             net_top_y=court_model.net_top_threshold_y(H),
-                             rest_frames=rest_frm)
-        print(f"Umpire initialized. Adjusted for stride={stride} (frames={rest_frm})")
+                             net_top_y=court_model.net_top_threshold_y(H))
+        print("Umpire initialized.")
     else:
         print("WARNING: No calibration data, Umpire disabled.")
 
     bounce_events = []
     minimap = Minimap()
+    court_segments = court_overlay_segments(H) if H is not None else None
+    display = np.empty((DISPLAY_SIZE[1], DISPLAY_SIZE[0] + minimap.map_w, 3), np.uint8)   # reused every frame
     fill_constraint = gap_fill.court_constraint(H_inv=H_inv, roi=roi)
     filled = []
     paused = False
@@ -62,7 +61,8 @@ def run_trajectory(video_path, backend=DEFAULT_BACKEND):
 
         # Umpire tracks landings
         if umpire is not None:
-            call = umpire.update(frame_idx, pt, detector.track_active, flight_id=detector.flight_id)
+            call = umpire.update(frame_idx - detector.frame_lag, pt, detector.track_active,
+                                 flight_id=detector.flight_id)
             if call is not None:
                 bounce_events.append(call)
                 print(f"\n[LANDING] Frame {call.frame_idx}: "
@@ -83,14 +83,12 @@ def run_trajectory(video_path, backend=DEFAULT_BACKEND):
             filled = detector.fill_gaps(allowed=fill_constraint, tail=config.TRAJECTORY_TAIL_LENGTH + 40)
         draw_shuttle_trajectory(frame, detector.trajectory, filled=filled)
         draw_bounce_markers(frame, bounce_events)
-        draw_court_overlay(frame, H)
+        draw_court_overlay(frame, H, court_segments)
 
-        frame_resized = cv2.resize(frame, DISPLAY_SIZE)
-        minimap_img = minimap.render(bounce_events)
-        display_img = cv2.hconcat([frame_resized, minimap_img])
+        display[:, :DISPLAY_SIZE[0]] = cv2.resize(frame, DISPLAY_SIZE)
+        display[:, DISPLAY_SIZE[0]:] = minimap.render(bounce_events)
 
-        cv2.imshow("Test Trajectory", display_img)
-        tuner.render()
+        cv2.imshow("Test Trajectory", display)
 
         # Keyboard controls
         key = cv2.waitKey(0 if paused else 1) & 0xFF
@@ -111,6 +109,7 @@ def run_trajectory(video_path, backend=DEFAULT_BACKEND):
 
 if __name__ == "__main__":
     setup_logging()
+    setup_gui()
     target_video = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_VIDEO
     backend = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_BACKEND
     run_trajectory(target_video, backend)

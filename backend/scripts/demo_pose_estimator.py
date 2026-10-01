@@ -2,7 +2,7 @@ import sys
 
 import cv2
 
-import _common  # noqa: F401  (puts backend/ on sys.path)
+import _common
 from core.pose_estimator import PoseEstimator, select_foot_point
 
 def run_mediapipe_pose(image_path):
@@ -14,7 +14,7 @@ def run_mediapipe_pose(image_path):
 
     # Initialize MediaPipe Pose Estimator
     print("Initializing MediaPipe Heavy model...")
-    estimator = PoseEstimator(model_complexity=2)
+    estimator = PoseEstimator(variant="heavy")
 
     # Ask the user to draw a bounding box around a player (simulating YOLO's output)
     print("Please draw a bounding box around a player using your mouse, then press ENTER or SPACE.")
@@ -66,6 +66,7 @@ def run_mediapipe_pose(image_path):
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
+    _common.setup_logging()
     if len(sys.argv) < 2:
         print("Usage: python demo_pose_estimator.py <path_to_image>")
         sys.exit(1)

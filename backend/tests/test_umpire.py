@@ -96,7 +96,7 @@ def feed(umpire, pts):
 
 
 def make_umpire():
-    return RallyUmpire(H_INV, SINGLES, frame_size=(1080, 1920), net_top_y=court_model.net_top_threshold_y(H))
+    return RallyUmpire(H_INV, SINGLES, frame_size=(1080, 1920), min_step_frames=1, net_top_y=court_model.net_top_threshold_y(H))
 
 
 def test_landing_inside_is_called_in():
@@ -116,7 +116,7 @@ def test_no_call_without_rest():
 
 
 def test_extrapolated_call_only_when_enabled_and_flagged_lost():
-    ump = RallyUmpire(H_INV, SINGLES, frame_size=(1080, 1920), net_top_y=court_model.net_top_threshold_y(H),
+    ump = RallyUmpire(H_INV, SINGLES, frame_size=(1080, 1920), min_step_frames=1, net_top_y=court_model.net_top_threshold_y(H),
                       allow_extrapolation=True)
     calls = feed(ump, flight_to((3.0, 3.0), rest_frames=0))
     assert len(calls) == 1 and calls[0].method == "lost"
@@ -172,7 +172,7 @@ def test_slide_is_called_at_first_touchdown_not_final_rest():
 def test_no_call_for_points_off_the_floor():
     # a resting blob high in the image (ceiling light) maps far outside the court
     pts = [(900, 60 + 30 * k) for k in range(8)] + [(900, 300)] * 4
-    ump = RallyUmpire(H_INV, SINGLES, frame_size=(1080, 1920), net_top_y=None)
+    ump = RallyUmpire(H_INV, SINGLES, frame_size=(1080, 1920), min_step_frames=1, net_top_y=None)
     assert feed(ump, pts) == []
 
 
@@ -266,10 +266,10 @@ def test_confirmed_contact_vs_track_ending_right_after_impact():
 def test_min_descent_blocks_a_shallow_impact_and_lets_a_deep_one_through():
     pts = flight_to((3.0, 3.0))
     # the flight falls several hundred px from its apex, so any sane threshold passes...
-    assert len(feed(RallyUmpire(H_INV, SINGLES, frame_size=(1080, 1920), min_descent_px=80,
+    assert len(feed(RallyUmpire(H_INV, SINGLES, frame_size=(1080, 1920), min_step_frames=1, min_descent_px=80,
                                 net_top_y=court_model.net_top_threshold_y(H)), pts)) == 1
     # ...and an impossible one rejects the very same flight: the parameter is live
-    assert feed(RallyUmpire(H_INV, SINGLES, frame_size=(1080, 1920), min_descent_px=5000,
+    assert feed(RallyUmpire(H_INV, SINGLES, frame_size=(1080, 1920), min_step_frames=1, min_descent_px=5000,
                             net_top_y=court_model.net_top_threshold_y(H)), pts) == []
 
 
@@ -382,7 +382,7 @@ def test_resting_needs_enough_still_points():
 
 def test_resting_can_be_turned_off():
     fall, rest = _fall_and_rest()
-    ump = RallyUmpire(H_INV, SINGLES, frame_size=(1080, 1920), net_top_y=court_model.net_top_threshold_y(H),
+    ump = RallyUmpire(H_INV, SINGLES, frame_size=(1080, 1920), min_step_frames=1, net_top_y=court_model.net_top_threshold_y(H),
                       allow_resting=False)
     assert _play(ump, [(0, fall), (5 * len(fall) + 40, rest)]) == []
 
@@ -401,3 +401,59 @@ def test_resting_not_on_a_person():
     calls += [ump.update(first + 5 * k, p, True, people_boxes=[box]) for k, p in enumerate(rest)]
     calls.append(ump.update(first + 5 * len(rest), None, False))
     assert [c for c in calls if c is not None] == []
+
+
+# --- a detection on every frame is thinned to the spacing the landing logic was tuned for -------
+
+def _sparse_and_dense(pts, step=5):
+    """The same flight as detections `step` frames apart, and as one linearly interpolated point per frame."""
+    sparse = [(step * k, p) for k, p in enumerate(pts)]
+    dense = []
+    for (f0, p0), (f1, p1) in zip(sparse[:-1], sparse[1:]):
+        for f in range(f0, f1):
+            w = (f - f0) / (f1 - f0)
+            dense.append((f, (p0[0] + (p1[0] - p0[0]) * w, p0[1] + (p1[1] - p0[1]) * w)))
+    dense.append(sparse[-1])
+    return sparse, dense
+
+
+def _play_frames(ump, frames):
+    calls = [ump.update(f, p, True) for f, p in frames]
+    calls.append(ump.update(frames[-1][0] + 1, None, False))
+    return [c for c in calls if c is not None]
+
+
+def test_dense_stream_gives_the_same_call_as_the_sparse_one():
+    sparse, dense = _sparse_and_dense(flight_to((3.0, 3.0)))
+    net = court_model.net_top_threshold_y(H)
+    a = _play_frames(RallyUmpire(H_INV, SINGLES, frame_size=(1080, 1920), net_top_y=net), sparse)
+    b = _play_frames(RallyUmpire(H_INV, SINGLES, frame_size=(1080, 1920), net_top_y=net), dense)
+    assert len(a) == 1 and a == b
+
+
+def test_decimate_is_a_no_op_for_sparse_points_and_keeps_the_first_of_each_step():
+    from core.umpire import FlightPoint
+    ump = make_umpire()
+    ump.min_step_frames = 5
+    sparse = [FlightPoint(5 * k, (k, k), False) for k in range(6)]
+    assert ump._decimate(sparse) is sparse or ump._decimate(sparse) == sparse
+    dense = [FlightPoint(f, (f, f), False) for f in range(0, 23)]
+    assert [p.frame_idx for p in ump._decimate(dense)] == [0, 5, 10, 15, 20]
+    uneven = [FlightPoint(f, (f, f), False) for f in (0, 1, 7, 8, 9, 14)]
+    assert [p.frame_idx for p in ump._decimate(uneven)] == [0, 7, 14]
+
+
+def test_dense_boundary_is_resolved_after_enough_thinned_look_ahead_points():
+    fall, after = _boundary_case([(2, -2)] + [(3, -1)] * 40)         # the shuttle bounces, then rests
+    net = court_model.net_top_threshold_y(H)
+    ump = RallyUmpire(H_INV, SINGLES, frame_size=(1080, 1920), net_top_y=net)
+    sparse_fall, dense_fall = _sparse_and_dense(fall)
+    last_fall_frame = dense_fall[-1][0]
+    calls = [ump.update(f, p, True, flight_id=1) for f, p in dense_fall]
+    dense_after = [(last_fall_frame + 1 + k, p) for k, p in enumerate(after)]       # one point per frame
+    calls += [ump.update(f, p, True, flight_id=2) for f, p in dense_after[:4]]
+    assert all(c is None for c in calls)        # 4 frames of look-ahead are not yet rest_frames + 1 spaced points
+    calls += [ump.update(f, p, True, flight_id=2) for f, p in dense_after[4:20]]
+    calls.append(ump.update(dense_after[-1][0] + 1, None, False))
+    made = [c for c in calls if c is not None]
+    assert len(made) == 1 and made[0].result == "IN"

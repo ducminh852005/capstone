@@ -222,15 +222,16 @@ class CourtCalibrator:
         y = pt_homogeneous[1] / pt_homogeneous[2]
         return (int(round(x)), int(round(y)))
 
-    def draw_court_frame(self, image, H, full=False):
+    def draw_court_frame(self, image, H, full=False, copy=True):
         """
         Draw the near half-court with all its inner lines. With full=True, also draw the
         full-court outline (the far half is extrapolated, so it is drawn thin and grey).
+        copy=False draws on `image` itself (saves a full-frame copy, ~1.7 ms at 1080p).
         """
         if H is None:
             return image
 
-        result = image.copy()
+        result = image.copy() if copy else image
         if full:
             outline = court_model.world_to_img(
                 [(0, 0), (court_model.COURT_LENGTH, 0), (court_model.COURT_LENGTH, court_model.COURT_WIDTH), (0, court_model.COURT_WIDTH)], H)

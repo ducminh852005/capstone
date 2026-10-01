@@ -75,3 +75,9 @@ def test_estimated_points_are_drawn_in_a_different_color():
     plain = np.zeros_like(frame)
     draw_shuttle_trajectory(plain, traj, tail_length=10)
     assert plain[10, 25][0] == 0 and plain[10, 25].any()   # measured color, a straight line over the gap
+
+
+def test_setup_gui_is_safe_to_call_repeatedly():
+    from _common import setup_gui
+    setup_gui()
+    setup_gui()      # no-op off Windows; on Windows raising the timer resolution twice is harmless

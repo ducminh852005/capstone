@@ -2,6 +2,8 @@
 Player trajectory cleaning, distance and heatmap, following the "Làm sạch quỹ đạo"
 section of the technical guideline. All positions are court coordinates in meters.
 """
+import math
+
 import cv2
 import numpy as np
 from scipy.signal import savgol_filter
@@ -40,9 +42,10 @@ def reject_outliers(xy, fps, region=court_model.REGION_BUFFERED,
 
     last_i, rejected_since = None, None
     reset_frames = max(int(reset_after_s * fps), 1)
-    for i in np.flatnonzero(~np.isnan(out[:, 0])):
+    xs, ys = out[:, 0].tolist(), out[:, 1].tolist()      # plain floats: math.hypot is ~100x faster than np.linalg.norm on a pair
+    for i in np.flatnonzero(~np.isnan(out[:, 0])).tolist():
         if last_i is not None:
-            speed = np.linalg.norm(out[i] - out[last_i]) * fps / (i - last_i)
+            speed = math.hypot(xs[i] - xs[last_i], ys[i] - ys[last_i]) * fps / (i - last_i)
             if speed > max_speed and (rejected_since is None or i - rejected_since < reset_frames):
                 rejected_since = rejected_since if rejected_since is not None else i
                 out[i] = np.nan

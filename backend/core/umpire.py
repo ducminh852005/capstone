@@ -123,7 +123,8 @@ class RallyUmpire:
                  settle_search_frames=config.UMPIRE_SETTLE_SEARCH_FRAMES,
                  floor_region=None,
                  allow_extrapolation=config.UMPIRE_ALLOW_EXTRAPOLATION,
-                 allow_resting=config.UMPIRE_ALLOW_RESTING):
+                 allow_resting=config.UMPIRE_ALLOW_RESTING,
+                 min_step_frames=config.UMPIRE_MIN_STEP_FRAMES):
         """
         frame_size: (h, w) of the frame; with roi, defines the edges a shuttle can exit through.
         net_top_y: image row the flight must rise above (anti-pickup filter); None disables it.
@@ -144,6 +145,8 @@ class RallyUmpire:
             extrapolate where it would reach the floor (Call.method == "lost"). Off by
             default: the shuttle is in the air, so its pixel does not map to a floor point,
             and the extrapolation just runs to the edge of floor_region.
+        min_step_frames: flights are analysed with at least this many frames between points
+            (see UMPIRE_MIN_STEP_FRAMES); irrelevant for detections that are already that sparse.
         allow_resting: a flight that ended while the shuttle was falling, followed soon after
             by detections of it lying still on the floor (UMPIRE_REST_RUN_POINTS in a row),
             is called at the first of those resting positions (Call.method == "resting").
@@ -161,6 +164,7 @@ class RallyUmpire:
         self.floor_region = default_floor_region() if floor_region is None else floor_region
         self.allow_extrapolation = allow_extrapolation
         self.allow_resting = allow_resting
+        self.min_step_frames = min_step_frames
         self._fall = None       # (frame_idx, pt) where the last flight ended while still falling
 
         self._H = None                  # world -> image, inverse of H_inv
@@ -230,7 +234,7 @@ class RallyUmpire:
         if pt is not None:
             on_person = any(x1 <= pt[0] <= x2 and y1 <= pt[1] <= y2 for x1, y1, x2, y2 in (people_boxes or []))
             self._flight.append(FlightPoint(frame_idx, pt, on_person))
-        if self._pending is not None and len(self._flight) >= self.rest_frames + 1:
+        if self._pending is not None and self._points_after_boundary() >= self.rest_frames + 1:
             call = call or self._resolve_pending()
         if self._was_active and not track_active:
             call = call or self._resolve_pending()
@@ -249,8 +253,25 @@ class RallyUmpire:
         pending, self._pending = self._pending, None
         if not pending:
             return None
-        series = pending + self._flight[:self.rest_frames + 1]
-        return self._landing_call(series, max_idx=len(pending))
+        series = self._decimate(pending + self._flight)
+        n_before = sum(1 for f in series if f.frame_idx <= pending[-1].frame_idx)
+        return self._landing_call(series[:n_before + self.rest_frames + 1], max_idx=n_before)
+
+    def _points_after_boundary(self):
+        """Look-ahead points (after thinning) collected since the pending flight ended."""
+        series = self._decimate(self._pending + self._flight)
+        return len(series) - sum(1 for f in series if f.frame_idx <= self._pending[-1].frame_idx)
+
+    def _decimate(self, points):
+        """Thin `points` so that consecutive ones are at least min_step_frames apart (first kept).
+        A no-op for detections that are already that sparse, e.g. one per TrackNet stride."""
+        if self.min_step_frames <= 1 or len(points) < 2:
+            return points
+        kept = [points[0]]
+        for p in points[1:]:
+            if p.frame_idx - kept[-1].frame_idx >= self.min_step_frames:
+                kept.append(p)
+        return kept
 
     def _near_edge(self, pt):
         if self.bounds is None:
@@ -377,7 +398,7 @@ class RallyUmpire:
         return court_model.in_region(world, self.floor_region)
 
     def _judge_flight(self, flight) -> Optional[Call]:
-        return self._landing_call(flight)
+        return self._landing_call(self._decimate(flight))
 
     def _landing_call(self, flight, max_idx=None) -> Optional[Call]:
         """

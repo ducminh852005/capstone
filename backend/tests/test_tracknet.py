@@ -128,6 +128,7 @@ DEFAULT_ONNX_PATH = os.path.splitext(DEFAULT_WEIGHTS_PATH)[0] + ".onnx"
 
 @pytest.mark.skipif(not os.path.exists(DEFAULT_ONNX_PATH), reason="TrackNet_best.onnx not exported")
 def test_tracknet_onnx_candidate_source_real_checkpoint_forward_pass():
+    pytest.importorskip("onnxruntime")      # the file can exist while the package is not installed
     from core.tracknet_onnx import TrackNetONNXCandidateSource
 
     src = TrackNetONNXCandidateSource()
@@ -207,3 +208,110 @@ def test_mask_is_cached_between_batches_and_refreshed_when_one_resolves():
         if resolved[i]:
             assert masks[i] is not masks[i - 1]
     assert all(m.shape == (roi[3] - roi[1], roi[2] - roi[0]) for m in masks)
+
+
+# --- adaptive stride: look less often while nothing is in play --------------------------------
+
+@pytest.mark.skipif(not os.path.exists(DEFAULT_WEIGHTS_PATH), reason="models/TrackNet_best.pt not downloaded")
+def test_adaptive_stride_uses_idle_stride_until_a_track_is_active():
+    from core import config
+    from core.tracknet import TrackNetCandidateSource
+
+    src = TrackNetCandidateSource(bg_frames=2)                 # default: adaptive
+    assert (src.batch_stride, src.idle_stride) == (config.TRACKNET_BATCH_STRIDE, config.TRACKNET_IDLE_STRIDE)
+    assert src.max_frames_between_detections == src.idle_stride > src.batch_stride
+    frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+    roi = (100, 50, 900, 500)
+
+    def resolutions(active, n=80):
+        src.set_active(active)
+        count = 0
+        for _ in range(n):
+            src.generate(frame, roi)
+            count += src._since_last_run == 0 and len(src._window) == src.seq_len
+        return count
+
+    resolutions(False, 20)                     # warm up: background + first window
+    idle, active = resolutions(False), resolutions(True)
+    assert idle == 80 // src.idle_stride and active == 80 // src.batch_stride
+    assert idle < active
+
+
+@pytest.mark.skipif(not os.path.exists(DEFAULT_WEIGHTS_PATH), reason="models/TrackNet_best.pt not downloaded")
+def test_explicit_batch_stride_is_taken_literally_and_standalone_use_is_not_adaptive():
+    from core.tracknet import TrackNetCandidateSource
+
+    fixed = TrackNetCandidateSource(batch_stride=3)
+    assert fixed.idle_stride == fixed.batch_stride == 3 and fixed.max_frames_between_detections == 3
+    explicit_idle = TrackNetCandidateSource(batch_stride=3, idle_stride=7)
+    assert explicit_idle.idle_stride == 7
+    assert explicit_idle._stride_now == 3       # until someone calls set_active(False)
+    assert TrackNetCandidateSource(batch_stride=6, idle_stride=2).idle_stride == 6     # never faster when idle
+
+
+@pytest.mark.skipif(not os.path.exists(DEFAULT_WEIGHTS_PATH), reason="models/TrackNet_best.pt not downloaded")
+def test_detector_drives_the_stride_from_its_track_state():
+    from core.shuttle_tracker import ShuttleDetector
+
+    det = ShuttleDetector(backend="tracknet")
+    assert det._adaptive
+    frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+    det.detect(frame, roi=(100, 50, 900, 500))
+    assert not det.track_active and det._source._stride_now == det._source.idle_stride
+    det.track_active = True                     # a track appears
+    det.detect(frame, roi=(100, 50, 900, 500))
+    assert det._source._stride_now in (det._source.batch_stride, det._source.idle_stride)
+    fixed = ShuttleDetector(backend="tracknet", tracknet_kwargs={"batch_stride": 4})
+    assert not fixed._adaptive
+    assert not ShuttleDetector(backend="cv")._adaptive
+
+
+# --- all_heatmaps: every heatmap of a pass is used; frames are replayed one per call -----------
+
+@pytest.mark.skipif(not os.path.exists(DEFAULT_WEIGHTS_PATH), reason="models/TrackNet_best.pt not downloaded")
+def test_all_heatmaps_replays_every_frame_in_order_with_a_constant_lag():
+    import torch
+    from core.tracknet import TrackNetCandidateSource
+
+    src = TrackNetCandidateSource(all_heatmaps=True, bg_frames=2)
+    assert src.lagged and src.batch_stride == src.idle_stride == src.seq_len
+    assert src.frames_per_detection == 1 and src.max_frames_between_detections == 1
+    lag = src.seq_len - 1
+
+    class Stub:
+        """A 'network' that puts a blob at x = 10 + 4 * (the call index painted into that frame)."""
+
+        def __call__(self, x):
+            out = torch.zeros(1, src.seq_len, H, W, device=x.device)
+            for k in range(src.seq_len):
+                call = int(round(float(x[0, 3 + 3 * k, 0, 0]) * 255))     # channels 0-2 are the background
+                out[0, k] = torch.from_numpy(gaussian_heatmap(10 + 4 * call, 100.0, sigma=2.0)).float()
+            return out
+
+    src.model = Stub()
+    roi = (0, 0, W, H)                                                      # scale 1: candidates are in network pixels
+    emitted, first = [], None
+    for call in range(60):
+        frame = np.full((H, W, 3), call, np.uint8)                          # the call index, as a grey level
+        cands, confs, mask = src.generate(frame, roi)
+        if src.emitted_call_idx is None:
+            assert len(cands) == 0 and first is None, "no candidates before the first replay, none skipped afterwards"
+            continue
+        first = call if first is None else first
+        emitted.append(src.emitted_call_idx)
+        assert call - src.emitted_call_idx == lag                           # constant lag
+        assert len(cands) == 1 and abs(cands[0][0] - (10 + 4 * src.emitted_call_idx)) < 1.0    # the right frame's blob
+        assert mask.shape == (H, W) and mask.any()
+    assert emitted == list(range(emitted[0], emitted[0] + len(emitted)))    # every frame, in order, once
+    assert first is not None and len(emitted) == 60 - first
+
+
+@pytest.mark.skipif(not os.path.exists(DEFAULT_WEIGHTS_PATH), reason="models/TrackNet_best.pt not downloaded")
+def test_all_heatmaps_rejects_a_stride_that_would_overlap_windows():
+    from core.tracknet import TrackNetCandidateSource
+
+    with pytest.raises(ValueError):
+        TrackNetCandidateSource(all_heatmaps=True, batch_stride=5)
+    src = TrackNetCandidateSource(all_heatmaps=True, batch_stride=8)       # = seq_len: fine
+    assert src.batch_stride == 8
+    assert not TrackNetCandidateSource(all_heatmaps=False).lagged

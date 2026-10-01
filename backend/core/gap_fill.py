@@ -1,14 +1,14 @@
 """
 Filling the frames in which the shuttle was not detected, from the detections around them.
 
-The tracker only sees the shuttle every TrackNet stride (8) frames, and sometimes misses
+The tracker only sees the shuttle every TrackNet stride (config.TRACKNET_BATCH_STRIDE) frames, and sometimes misses
 one or more detections on top of that. Between two detections the shuttle is in ballistic
 flight, so the missing positions follow inertia (the velocity implied by the detections on
 both sides) plus gravity: one parabola per image axis, fitted to the neighbouring detections.
 
 Detections form *chains*: runs of detections at most a stride or so apart within one flight.
 Two kinds of gaps are filled:
-  - "stride": the frames between consecutive detections of a chain (always empty at stride 8);
+  - "stride": the frames between consecutive detections of a chain (always empty at stride > 1);
   - "bridge": the gap between the end of one chain and the start of the next, only when both
     chains have at least `min_chain_len` detections (so each side gives a direction), the gap
     is not longer than `max_gap_frames`, the next chain did not start at a racket hit, and a
@@ -26,6 +26,8 @@ tracker.
 """
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Sequence, Tuple
+
+from functools import lru_cache
 
 import numpy as np
 
@@ -99,13 +101,20 @@ def court_constraint(H_inv=None, roi=None,
 
 
 def _fit(window: Sequence[Detection]):
-    """Per-axis parabola (line if only two detections) through the window: (cx, cy, t0, rms_px)."""
-    t = np.array([d.frame_idx for d in window], dtype=float)
+    """Per-axis parabola (line if only two detections) through the window: (cx, cy, t0, rms_px).
+    Results are cached by the window's (frame, x, y) values: when a new detection arrives only
+    the last gaps change, the others are looked up (callers must not modify the arrays)."""
+    return _fit_cached(tuple((d.frame_idx, d.pt[0], d.pt[1]) for d in window))
+
+
+@lru_cache(maxsize=1024)
+def _fit_cached(points):
+    t = np.array([p[0] for p in points], dtype=float)
     t0 = float(t.mean())
     tt = t - t0
-    xs = np.array([d.pt[0] for d in window], dtype=float)
-    ys = np.array([d.pt[1] for d in window], dtype=float)
-    deg = min(2, len(window) - 1)
+    xs = np.array([p[1] for p in points], dtype=float)
+    ys = np.array([p[2] for p in points], dtype=float)
+    deg = min(2, len(points) - 1)
     cx, cy = np.polyfit(tt, xs, deg), np.polyfit(tt, ys, deg)
     resid = np.hypot(np.polyval(cx, tt) - xs, np.polyval(cy, tt) - ys)
     return cx, cy, t0, float(np.sqrt(np.mean(resid ** 2)))
@@ -128,7 +137,7 @@ def _fill_between(a: Detection, b: Detection, window, kind, allowed, max_rms_px,
 
 def fill_gaps(dets: Sequence[Detection],
               allowed: Optional[Callable[[Tuple[float, float]], bool]] = None,
-              max_link_frames: int = 12,
+              max_link_frames: int = config.SHUTTLE_FILL_LINK_FRAMES,
               max_gap_frames: int = config.SHUTTLE_FILL_MAX_GAP_FRAMES,
               min_chain_len: int = config.SHUTTLE_FILL_MIN_CHAIN_LEN,
               stride_fit_points: int = config.SHUTTLE_FILL_STRIDE_FIT_POINTS,

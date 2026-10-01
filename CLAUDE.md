@@ -28,7 +28,7 @@ python scripts/calibrate_court.py --video ../data/cfr/tran04_cam1.mp4
 - `H`: world → image. `H_inv`: image → world. Không đổi chiều ngầm; đặt tên biến `*_px`, `*_m`, `img_*`, `world_*` để lộ hệ tọa độ.
 - **Hậu tố đơn vị bắt buộc**: `_px`, `_m`, `_s`, `_frames`. Tốc độ cầu: px/frame. Tốc độ người: m/s.
 - Video phải là **CFR 60 fps** (`process_all_videos.py`). Không đoán fps: lấy từ `ThreadedVideoReader.fps`; nếu bỏ frame (stride) thì truyền `fps / stride` cho `PlayerTracker`.
-- TrackNet chỉ ra candidate mỗi `batch_stride` frame (mặc định `config.TRACKNET_BATCH_STRIDE` = 5; 8 = không chồng lấn), các frame còn lại là mảng rỗng. Code tiêu thụ phải chịu được `None`/rỗng; `max_coast` và `min_gate_px` scale theo stride.
+- TrackNet chỉ ra candidate mỗi `batch_stride` frame (`config.TRACKNET_BATCH_STRIDE` = 5 khi có track; `TRACKNET_IDLE_STRIDE` = 8 khi chưa có track), các frame còn lại là mảng rỗng. Code tiêu thụ phải chịu được `None`/rỗng; `max_coast` và `min_gate_px` scale theo stride. Chế độ `TRACKNET_ALL_HEATMAPS` (tắt) cho candidate mỗi frame nhưng trễ 7 frame (`detector.frame_lag`).
 - Calibration hiện chỉ khớp **nửa sân gần**; nửa xa được ngoại suy. `data/calibration.json` là một calibration toàn cục: đổi góc camera phải hiệu chỉnh lại.
 
 ## 3. Config & hằng số
@@ -82,7 +82,8 @@ python scripts/calibrate_court.py --video ../data/cfr/tran04_cam1.mp4
   python scripts/eval_events.py <video> --tol 12 --out <tên>      # P/R của hit, smash, chạm đất so với nhãn
   ```
   Đọc `pct_frames_detected`, `n_runs`, `umpire_calls`. GPU laptop throttle: so sánh các lần chạy sát nhau.
-- `RallyUmpire.update` luôn nhận `flight_id=detector.flight_id`, `SmashDetector.update` nhận `detector.start_source`: một cú đánh khởi động lại track ngay trong một lần `detect()` nên `track_active` không hề đổi.
+- `RallyUmpire.update` luôn nhận `flight_id=detector.flight_id`, `SmashDetector.update` nhận `detector.start_source`: một cú đánh khởi động lại track ngay trong một lần `detect()` nên `track_active` không hề đổi. Frame của điểm cầu là `frame_idx - detector.frame_lag` (0 ở chế độ thường, 7 khi `TRACKNET_ALL_HEATMAPS`).
+- So sánh tốc độ hai cấu hình bằng `python scripts/ab_bench.py <video> --a "half=1" --b "half=0"` (xen kẽ từng frame): GPU laptop throttle nên hai lần chạy riêng cách nhau có thể lệch 10–50%.
 - `LiveTuner` (`scripts/_common.py`): thuộc tính phải tồn tại (gõ sai → `AttributeError`) và code bị tune phải đọc giá trị lúc gọi.
 
 ## 9. Git & review
@@ -103,9 +104,12 @@ python scripts/calibrate_court.py --video ../data/cfr/tran04_cam1.mp4
 
 ## Known issues (còn lại sau đợt dọn dẹp)
 
-- `ShuttleDetector.__init__` có ~20 tham số; cần dataclass cấu hình khi chạm tới.
+- `ShuttleDetector.__init__` có ~20 tham số và `detect()` dài ~110 dòng; `RallyUmpire.__init__` có 15 tham số. Cần dataclass cấu hình / tách hàm khi chạm tới.
+- 6 hằng config chỉ còn được `ShuttleTrajectoryProcessor.fill_missing_trajectory`/`_likely_hit` (chỉ test gọi) dùng: `SHUTTLE_MAX_GAP_FRAMES`, `SHUTTLE_FIT_WINDOW`, `SHUTTLE_MAX_FIT_RMS_PX`, `HIT_*`. Xóa cùng hàm đó khi không cần nữa.
+- Chưa có test cho `PlayerTracker`, `PoseEstimator`, `video_io` (start_frame, fps fallback), `video_processor`; `video_io.py` đoán `fps or 60.0` không cảnh báo.
 - Chưa có type hint ở phần lớn API `core/` (chỉ code mới có).
 - Code vẽ trùng lặp: `_common.draw_shuttle_trajectory`/`Minimap` vs `ShuttleDetector.draw_trajectory` vs `CourtCalibrator.draw_court_frame`.
+- **Chế độ `TRACKNET_ALL_HEATMAPS` chưa là mặc định**: nhanh hơn stride thích ứng ~7% (chưa đạt ngưỡng 15% đặt ra), bắt được smash frame ~390 và nhiều landing hơn ở dung sai rộng, nhưng sinh nhiều hit vật lý hơn (45 vs 33) mà chưa có nhãn để kết luận là đúng hay sai. Nhãn hạt giống `data/events/tran04_cam1.events.json` đến từ `data/missed_bounces.txt` (bấm `s` muộn vài frame, chỉ có recall) — cần duyệt tay trước khi tin P/R.
 - **Chưa có nhãn thật**: `data/events/tran04_cam1.events.json` là file mẫu rỗng; `PHYSICS_STOP_SPEED_PX`, `SMASH_SPEED_THRESHOLD`, `UMPIRE_MIN_DESCENT_PX` và luật chạm đất đều chưa được hiệu chỉnh bằng dữ liệu. Điền nhãn rồi chạy `scripts/eval_events.py`.
 - **Chạm đất vs hit**: cú nảy sau khi chạm sàn là đảo chiều vận tốc nên physics filter coi là ranh giới flight; umpire xử lý bằng cách xét flight cũ + vài điểm sau ranh giới (`_resolve_pending`). Cầu rơi trong đoạn không detect rồi xuất hiện nằm yên được call theo quy tắc `resting` (kém chính xác hơn `contact`). Các ngưỡng (`UMPIRE_REST_*`, `PHYSICS_STOP_SPEED_PX`) chưa hiệu chỉnh bằng nhãn; một số bounce vẫn bị bỏ sót khi cầu chỉ hiện ở vị trí nhiễu (di chuyển 2–4 px/frame do nhiễu TrackNet) hoặc không được detect.
 - Vùng sân xa rất thô (1 px ≈ 13 cm tại vạch cuối xa; nửa xa chỉ là ngoại suy homography): call ở nửa xa kém tin cậy; xem `Call.uncertainty_m`.

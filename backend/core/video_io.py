@@ -14,7 +14,7 @@ class ThreadedVideoReader:
 
     _END = object()
 
-    def __init__(self, path, start_frame=0, queue_size=8):
+    def __init__(self, path, start_frame=0, queue_size=4):
         self.cap = cv2.VideoCapture(path)
         if not self.cap.isOpened():
             raise IOError(f"Could not open video: {path}")
@@ -26,10 +26,24 @@ class ThreadedVideoReader:
         self._start = start_frame
         self._queue = queue.Queue(maxsize=queue_size)
         self._stop = threading.Event()
+        self._error = None      # exception of the decoding thread, re-raised to the consumer
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def _run(self):
+        try:
+            self._decode()
+        except Exception as e:  # noqa: BLE001 - not swallowed: handed to the consumer by __iter__
+            self._error = e
+        # Signal end of stream, but never block forever on a full queue after release().
+        while not self._stop.is_set():
+            try:
+                self._queue.put(self._END, timeout=0.1)
+                return
+            except queue.Full:
+                continue
+
+    def _decode(self):
         idx = self._start
         while not self._stop.is_set():
             ok, frame = self.cap.read()
@@ -42,18 +56,13 @@ class ThreadedVideoReader:
                 except queue.Full:
                     continue
             idx += 1
-        # Signal end of stream, but never block forever on a full queue after release().
-        while not self._stop.is_set():
-            try:
-                self._queue.put(self._END, timeout=0.1)
-                return
-            except queue.Full:
-                continue
 
     def __iter__(self):
         while True:
             item = self._queue.get()
             if item is self._END:
+                if self._error is not None:
+                    raise self._error
                 return
             yield item
 
