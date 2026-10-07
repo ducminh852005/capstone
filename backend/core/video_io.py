@@ -1,7 +1,35 @@
+import logging
 import queue
 import threading
+from typing import NamedTuple, Tuple
 
 import cv2
+
+from . import config
+
+logger = logging.getLogger(__name__)
+
+
+class VideoProbe(NamedTuple):
+    fps: float                   # frames per second
+    size: Tuple[int, int]        # (width, height) px
+    frame_count: int             # frames reported by the container (0 when unknown)
+
+
+def probe_video(path) -> VideoProbe:
+    """Container properties of a video without decoding it. Raises IOError if it cannot be opened."""
+    cap = cv2.VideoCapture(str(path))
+    try:
+        if not cap.isOpened():
+            raise IOError(f"Could not open video: {path}")
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        if not fps or fps <= 0:
+            logger.warning("%s reports no fps; assuming %s", path, config.CFR_FPS)
+            fps = config.CFR_FPS
+        size = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+        return VideoProbe(float(fps), size, int(cap.get(cv2.CAP_PROP_FRAME_COUNT)))
+    finally:
+        cap.release()
 
 
 class ThreadedVideoReader:

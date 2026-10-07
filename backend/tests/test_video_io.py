@@ -5,7 +5,8 @@ import numpy as np
 import pytest
 
 from core.court_calibration import CourtCalibrator
-from core.video_io import ThreadedVideoReader
+from core import config
+from core.video_io import ThreadedVideoReader, probe_video
 
 
 def make_video(path, n_frames=30, size=(64, 48)):
@@ -77,6 +78,42 @@ def test_decoder_thread_error_reaches_the_consumer_instead_of_hanging(tmp_path, 
     assert not t.is_alive(), "iteration hung after the decoder thread died"
     assert got == [0, 1, 2] and result.get("error") == "decoder blew up"
     reader.release()
+
+
+def test_probe_video_reads_container_properties_without_decoding(tmp_path):
+    path = make_video(tmp_path / "v.avi", n_frames=12, size=(64, 48))
+    probe = probe_video(path)
+    assert probe.fps == pytest.approx(30.0)
+    assert probe.size == (64, 48)
+    assert probe.frame_count == 12
+
+
+def test_probe_video_unreadable_raises_ioerror(tmp_path):
+    with pytest.raises(IOError):
+        probe_video(tmp_path / "missing.avi")
+
+
+def test_probe_video_warns_and_assumes_cfr_fps_when_the_container_reports_none(tmp_path, monkeypatch, caplog):
+    path = make_video(tmp_path / "v.avi")
+    real_capture = cv2.VideoCapture
+
+    class NoFps:
+        """A capture that reports no frame rate."""
+
+        def __init__(self, p):
+            self._cap = real_capture(p)
+
+        def get(self, prop):
+            return 0.0 if prop == cv2.CAP_PROP_FPS else self._cap.get(prop)
+
+        def __getattr__(self, name):
+            return getattr(self._cap, name)
+
+    monkeypatch.setattr(cv2, "VideoCapture", NoFps)
+    with caplog.at_level("WARNING", logger="core.video_io"):
+        probe = probe_video(path)
+    assert probe.fps == config.CFR_FPS
+    assert any("no fps" in r.message for r in caplog.records)
 
 
 def test_default_queue_is_small():

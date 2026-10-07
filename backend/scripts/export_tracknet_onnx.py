@@ -66,7 +66,6 @@ def main():
         sys.exit(1)
     print("GATE PASSED. ONNX export matches PyTorch output.")
 
-
 if __name__ == "__main__":
     _common.setup_logging()
     main()

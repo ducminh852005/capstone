@@ -32,6 +32,9 @@ logger = logging.getLogger(__name__)
 SINGLES = "singles"
 DOUBLES = "doubles"
 
+RESULT_IN = "IN"
+RESULT_OUT = "OUT"
+
 METHOD_CONTACT = "contact"                        # impact found, then the shuttle calmed down
 METHOD_UNCONFIRMED = "contact_unconfirmed"        # impact found, but the track ended right after it
 METHOD_LOST = "lost"                              # track lost mid-fall; position extrapolated

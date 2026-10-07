@@ -1,6 +1,8 @@
 import numpy as np
 import cv2
 
+import pytest
+
 from core.shuttle_tracker import ShuttleDetector, ShuttleTrajectoryProcessor
 
 H, W = 1080, 1920
@@ -19,6 +21,7 @@ def render(points, bg=40):
     return frame
 
 
+@pytest.mark.slow
 def test_tracks_parabola_through_distractors_and_dropouts():
     rng = np.random.default_rng(1)
     det = ShuttleDetector(backend="cv")
@@ -52,6 +55,7 @@ def test_tracks_parabola_through_distractors_and_dropouts():
     assert np.hypot(last[0] - truth(49)[0], last[1] - truth(49)[1]) < 5
 
 
+@pytest.mark.slow
 def test_static_flicker_never_starts_a_track():
     det = ShuttleDetector(backend="cv")
     for t in range(40):
@@ -62,6 +66,7 @@ def test_static_flicker_never_starts_a_track():
     assert not det.track_active
 
 
+@pytest.mark.slow
 def test_player_body_blobs_are_ignored():
     det = ShuttleDetector(backend="cv")
     box = (800, 300, 1000, 800)
@@ -71,6 +76,7 @@ def test_player_body_blobs_are_ignored():
         assert pt is None
 
 
+@pytest.mark.slow
 def test_slow_track_does_not_slide_onto_player_legs():
     det = ShuttleDetector(backend="cv")
     box = (800, 300, 1000, 800)   # lower 2/3 starts at y = 466
@@ -81,6 +87,7 @@ def test_slow_track_does_not_slide_onto_player_legs():
             assert pt is None
 
 
+@pytest.mark.slow
 def test_spectator_boxes_are_ignored():
     det = ShuttleDetector(backend="cv")
     box = (100, 100, 400, 900)
@@ -89,6 +96,7 @@ def test_spectator_boxes_are_ignored():
         assert pt is None
 
 
+@pytest.mark.slow
 def test_overlong_track_is_ended():
     det = ShuttleDetector(backend="cv", max_track_len=30)
     longest = 0

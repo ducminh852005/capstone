@@ -13,9 +13,7 @@ Usage:
 import argparse
 import json
 import os
-import subprocess
 import time
-from collections import defaultdict
 
 import numpy as np
 
@@ -29,23 +27,7 @@ from core.video_io import ThreadedVideoReader
 MIN_WARMUP_FRAMES = 10
 
 
-class StageTimer:
-    def __init__(self):
-        self.total = defaultdict(float)
-        self.calls = defaultdict(int)
-        self.enabled = False
-
-    def wrap(self, name, fn):
-        def wrapped(*args, **kwargs):
-            if not self.enabled:
-                return fn(*args, **kwargs)
-            t0 = time.perf_counter()
-            try:
-                return fn(*args, **kwargs)
-            finally:
-                self.total[name] += time.perf_counter() - t0
-                self.calls[name] += 1
-        return wrapped
+StageTimer = _common.StageTimer
 
 
 def runs_of_detections(points):
@@ -68,17 +50,6 @@ def second_diff_px(points):
         if a is not None and b is not None and c is not None:
             out.append(np.hypot(c[0] - 2 * b[0] + a[0], c[1] - 2 * b[1] + a[1]))
     return np.array(out)
-
-
-def git_revision():
-    """Short git hash of the repo (with '+dirty' when the tree has changes), or None."""
-    try:
-        run = lambda *a: subprocess.run(["git", *a], cwd=config.REPO_ROOT, capture_output=True, text=True, timeout=10)
-        rev = run("rev-parse", "--short", "HEAD").stdout.strip()
-        dirty = bool(run("status", "--porcelain").stdout.strip())
-        return rev + ("+dirty" if dirty else "") if rev else None
-    except (OSError, subprocess.SubprocessError):
-        return None
 
 
 def main():
@@ -185,7 +156,7 @@ def main():
 
     result = {
         "video": os.path.basename(args.video),
-        "git": git_revision(),
+        "git": _common.git_revision(),
         "config": {
             "shuttle_backend": args.shuttle_backend if detector is not None else None,
             "tracknet_strides_active_idle": detector.strides if detector is not None else None,

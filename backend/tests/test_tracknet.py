@@ -67,6 +67,7 @@ def test_in_dim_for_matches_upstream_get_model(bg_mode, seq_len, expected):
     assert in_dim_for(seq_len, bg_mode) == expected
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not os.path.exists(DEFAULT_WEIGHTS_PATH), reason="models/TrackNet_best.pt not downloaded")
 def test_tracknet_candidate_source_real_checkpoint_forward_pass():
     from core.tracknet import TrackNetCandidateSource
@@ -87,6 +88,7 @@ def test_tracknet_candidate_source_real_checkpoint_forward_pass():
     assert last_mask is not None
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not os.path.exists(DEFAULT_WEIGHTS_PATH), reason="models/TrackNet_best.pt not downloaded")
 def test_tracknet_batch_stride_shorter_than_seq_len_runs_more_often():
     """
@@ -126,6 +128,7 @@ def test_tracknet_batch_stride_shorter_than_seq_len_runs_more_often():
 DEFAULT_ONNX_PATH = os.path.splitext(DEFAULT_WEIGHTS_PATH)[0] + ".onnx"
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not os.path.exists(DEFAULT_ONNX_PATH), reason="TrackNet_best.onnx not exported")
 def test_tracknet_onnx_candidate_source_real_checkpoint_forward_pass():
     pytest.importorskip("onnxruntime")      # the file can exist while the package is not installed
@@ -189,6 +192,7 @@ def test_gpu_side_conversion_is_bit_identical_to_the_numpy_one():
     assert got.dtype == np.float32 and np.array_equal(got, expected)
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not os.path.exists(DEFAULT_WEIGHTS_PATH), reason="models/TrackNet_best.pt not downloaded")
 def test_mask_is_cached_between_batches_and_refreshed_when_one_resolves():
     from core.tracknet import TrackNetCandidateSource
@@ -212,6 +216,7 @@ def test_mask_is_cached_between_batches_and_refreshed_when_one_resolves():
 
 # --- adaptive stride: look less often while nothing is in play --------------------------------
 
+@pytest.mark.slow
 @pytest.mark.skipif(not os.path.exists(DEFAULT_WEIGHTS_PATH), reason="models/TrackNet_best.pt not downloaded")
 def test_adaptive_stride_uses_idle_stride_until_a_track_is_active():
     from core import config
@@ -268,6 +273,7 @@ def test_detector_drives_the_stride_from_its_track_state():
 
 # --- all_heatmaps: every heatmap of a pass is used; frames are replayed one per call -----------
 
+@pytest.mark.slow
 @pytest.mark.skipif(not os.path.exists(DEFAULT_WEIGHTS_PATH), reason="models/TrackNet_best.pt not downloaded")
 def test_all_heatmaps_replays_every_frame_in_order_with_a_constant_lag():
     import torch

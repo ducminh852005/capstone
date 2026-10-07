@@ -11,14 +11,17 @@ Hệ thống phân tích cầu lông: theo dõi người chơi (YOLOv8 + ByteTra
 | `backend/core/` | Logic thuần, không UI (`cv2.imshow`, `waitKey` bị cấm). Đây là nơi duy nhất chứa thuật toán. |
 | `backend/scripts/` | Demo/tool tương tác (`demo_*.py`, `calibrate_court.py`), benchmark, tiện ích. **Không phải test.** |
 | `backend/tests/` | pytest thật, dữ liệu tổng hợp, không cần video. |
+| `backend/web/` | Template HTML tĩnh của trình xem clip (`telestrator.html`); `core/clip_report.py` điền dữ liệu vào. Phần toán thuần trong khối `MATH-BEGIN/MATH-END` được `tests/test_clip_report.py` chạy bằng node so với OpenCV. |
 | `backend/models/` | Weights (git-ignore). Cách tải: `QUICK_START.md`. |
-| `data/` | `raw/`, `cfr/` (git-ignore), `calibration.json`, `metadata.csv`, `benchmarks/*.json`. |
+| `data/` | `raw/`, `cfr/`, `clips/` (git-ignore), `calibration.json`, `metadata.csv`, `benchmarks/*.json`. |
 
 ```bash
 cd backend
 python -m pytest -q                         # chạy TẤT CẢ test (pytest.ini chỉ thu thập tests/)
+python -m pytest -q -m "not slow"           # bỏ ~14 test chậm (weights thật, khung 1080p): ~15 s, dùng khi phát triển
 python scripts/demo_auto_umpire.py [video]  # demo; chạy từ thư mục nào cũng được
 python scripts/calibrate_court.py --video ../data/cfr/tran04_cam1.mp4
+python scripts/analyze_clip.py ../data/cfr/tran04_cam1.mp4 --start 250 --frames 300   # clip + telestrator -> data/clips/
 ```
 
 ## 2. Hệ tọa độ & đơn vị (bất biến – sai là sai kết quả)
@@ -33,7 +36,7 @@ python scripts/calibrate_court.py --video ../data/cfr/tran04_cam1.mp4
 
 ## 3. Config & hằng số
 
-- Mọi ngưỡng/tunable nằm trong `backend/core/config.py`: một định nghĩa duy nhất, có docstring ghi ý nghĩa + đơn vị, tên có prefix theo hệ con (`KALMAN_*`, `PHYSICS_*`, `UMPIRE_*`, `SMASH_*`, `SELECTOR_*`, `TRACKNET_*`, `CV_*`, `PLAYER_*`).
+- Mọi ngưỡng/tunable nằm trong `backend/core/config.py`: một định nghĩa duy nhất, có docstring ghi ý nghĩa + đơn vị, tên có prefix theo hệ con (`KALMAN_*`, `PHYSICS_*`, `UMPIRE_*`, `SMASH_*`, `SELECTOR_*`, `TRACKNET_*`, `CV_*`, `PLAYER_*`, `CLIP_*`, `POSE_*`, `HITTER_*`, `RALLY_*`, `MOVE_*`, `ZONE_*`, `SHOT_*`).
 - `config.py` là lá: **không import module `core` khác**. Kích thước sân vật lý ở `court_model.py`.
 - Cấm magic number trong `core/` và `scripts/`. Ngoại lệ được chấp nhận: hằng toán học/kernel nội bộ có comment, và default của tham số keyword đã có tên + docstring.
 - Default argument bind lúc `def`: giá trị cần tune live phải được đọc lúc gọi (`config.X` trong thân hàm, hoặc thuộc tính instance). Ví dụ đúng: `SmashDetector.speed_threshold` đọc `config` mỗi lần gọi.
@@ -120,3 +123,7 @@ python scripts/calibrate_court.py --video ../data/cfr/tran04_cam1.mp4
 - `main.py`/`database.py` là scaffold, chưa nối với pipeline; `alembic`, `psycopg2-binary`, `pydantic-settings`, `python-multipart` chưa được import.
 - Calibration chỉ cho nửa sân gần; nửa xa ngoại suy.
 - `ShuttleDetector.fill_gaps()` (lấp frame không detect) mới dùng để vẽ; umpire/smash vẫn chỉ dùng detection thật. Homography chỉ mô tả mặt sàn nên không suy được độ cao cầu: ràng buộc sân chỉ loại điểm nằm dưới sàn hoặc ngoài ROI.
+- **Phân tích clip (`scripts/analyze_clip.py`) đã xong: nền + viewer, gán hit cho người chơi, rally + thắng/thua, thống kê di chuyển (quãng đường, tốc độ, 6 vùng, vị trí chờ, hồi vị, nghỉ), phân loại cú rule-based (serve/smash/drop/clear/lift/net/drive, chỉ người chơi gần) + thống kê theo loại cú.** Viewer có tab "Nhãn" (duyệt/sửa cú, thêm cú sót, xuất JSON; `scripts/merge_labels.py` gộp vào `data/events/*.events.json`, `scripts/eval_shots.py` chấm loại cú) nhưng **chưa có nhãn nào được duyệt**: các ngưỡng vẫn chưa hiệu chỉnh. Phân loại cú dùng pose 2D nhìn từ phía sau, không có độ cao cầu, tốc độ chỉ theo ảnh (cầu bay ra xa camera trông như bay lên): chỉ là gợi ý; `SHOT_*` chưa hiệu chỉnh (chỉ ngưỡng `SHOT_OVERHEAD_MIN_ABOVE_HEAD_BODY` được chỉnh từ một cú smash trên tran04). Mọi ngưỡng `HITTER_*`, `RALLY_*`, `MOVE_*`, `ZONE_*`, `SHOT_*`, `POSE_MIN_SCORE` là ước lượng đầu tiên, chưa hiệu chỉnh bằng nhãn. Cú đánh của đối thủ chỉ là suy luận (không tracking nửa xa): đo được tay mà không tay nào gần cầu thì coi là đối thủ, nên một cú đổi hướng do nhiễu/chạm lưới cũng có thể bị gán cho đối thủ (`low_confidence`). Hit vắng pose = `unknown`. Lưới/chạm đất sớm chưa phát hiện nên rally thua vào lưới kết thúc bằng `timeout` không có người thắng.
+- Viewer chỉ kiểm chứng trên Chrome/Edge (seek frame-accurate dựa `currentTime = (frame + 0.5) / fps`). Homography được áp dụng lại bằng JS (vài dòng, `tests/test_clip_report.py` so với OpenCV, trang tự kiểm bằng `court.selftest`). Clip ~420 frame mất 80-170 s (pose "heavy" ~70% thời gian; số đo dao động 2x do laptop throttle: so số call hoặc chạy xen kẽ; `analyze_clip.py --profile` in ms/call; pre-roll chỉ pose mỗi `CLIP_PREROLL_POSE_EVERY` frame); chế độ `TRACKNET_ALL_HEATMAPS` bị từ chối trong clip mode.
+- `analysis.json` schema 2 (skeleton = 66 số nguyên, `-1` = khớp ẩn); file schema 1 cũ không dùng được với viewer mới. `--pose-variant lite` và `--yolo-every 2` nhanh hơn nhưng chưa kiểm chứng bằng nhãn.
+- `video_io.ThreadedVideoReader` vẫn đoán `fps or 60.0` không cảnh báo (chỉ `probe_video` cảnh báo); chưa test `start_frame` của reader (clip mode tránh nó bằng cách cắt clip).

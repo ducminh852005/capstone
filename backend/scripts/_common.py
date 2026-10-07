@@ -7,8 +7,10 @@ working directory) and provides the boilerplate shared by the demos.
 """
 import atexit
 import logging
+import subprocess
 import sys
 import time
+from collections import defaultdict
 from pathlib import Path
 
 import cv2
@@ -47,6 +49,48 @@ def setup_gui():
 def setup_logging(level=logging.INFO):
     """Show core/ log messages on the console; call once at the top of a script's main."""
     logging.basicConfig(level=level, format="%(levelname)s %(name)s: %(message)s")
+
+
+class StageTimer:
+    """Accumulates wall time and call counts of wrapped functions, once `enabled` is set."""
+
+    def __init__(self):
+        self.total = defaultdict(float)        # seconds per stage name
+        self.calls = defaultdict(int)
+        self.enabled = False
+
+    def wrap(self, name, fn):
+        def wrapped(*args, **kwargs):
+            if not self.enabled:
+                return fn(*args, **kwargs)
+            t0 = time.perf_counter()
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                self.total[name] += time.perf_counter() - t0
+                self.calls[name] += 1
+        return wrapped
+
+    def report(self, n_frames):
+        """One line per stage: calls, ms per call and ms per frame."""
+        return [f"  {name:10s} {self.calls[name]:6d} calls  {1000 * t / max(self.calls[name], 1):7.1f} ms/call  "
+                f"{1000 * t / max(n_frames, 1):7.1f} ms/frame" for name, t in sorted(self.total.items())]
+
+
+GIT_TIMEOUT_S = 10
+"""Longest wait (seconds) for a git command in git_revision()."""
+
+
+def git_revision():
+    """Short git hash of the repo (with '+dirty' when the tree has changes), or None."""
+    try:
+        run = lambda *a: subprocess.run(["git", *a], cwd=config.REPO_ROOT, capture_output=True, text=True,
+                                        timeout=GIT_TIMEOUT_S)
+        rev = run("rev-parse", "--short", "HEAD").stdout.strip()
+        dirty = bool(run("status", "--porcelain").stdout.strip())
+        return rev + ("+dirty" if dirty else "") if rev else None
+    except (OSError, subprocess.SubprocessError):
+        return None
 
 
 # ========================= Detector Init ==============================

@@ -2,6 +2,8 @@ import numpy as np
 import cv2
 
 
+import pytest
+
 from core import court_model
 from core.court_calibration import CourtCalibrator
 
@@ -42,6 +44,7 @@ def test_validate_calibration_reports_errors():
     assert not ok and mean_err > 20
 
 
+@pytest.mark.slow
 def test_refine_homography_recovers_perturbed_corners():
     rng = np.random.default_rng(0)
     H_true = court_model.homography_from_points(TRUE_CORNERS)

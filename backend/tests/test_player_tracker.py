@@ -74,6 +74,7 @@ def test_detect_without_tracks_returns_empty_arrays():
     assert boxes.shape == (0, 4) and ids.shape == (0,)
 
 
+@pytest.mark.slow
 def test_yolo_runs_in_fp32_by_default():
     assert config.PLAYER_YOLO_HALF is False
     weights = config.PLAYER_YOLO_MODEL_PATH
@@ -82,3 +83,59 @@ def test_yolo_runs_in_fp32_by_default():
         pytest.skip("YOLO / MediaPipe weights not downloaded")
     assert PlayerTracker().half is False
     assert PlayerTracker(half=True).half is True
+
+
+def test_player_obs_built_positionally_has_no_landmarks():
+    assert obs(1, 5, (0, 0, 10, 10)).landmarks is None
+
+
+def pose_tracker(landmarks, foot=((10.0, 20.0), "foot")):
+    """A PlayerTracker whose pose estimator is a stub returning `foot` and exposing `landmarks`."""
+    t = object.__new__(PlayerTracker)
+    t.pose_every, t.yolo_every = 1, 1
+    t._pose_tried, t.foot_offsets, t._fresh_landmarks, t._n_updates = set(), {}, {}, 1
+    t.pose_estimator = SimpleNamespace(last_landmarks=landmarks, extract_foot_point=lambda frame, bbox: foot)
+    return t
+
+
+def test_pose_landmarks_of_a_track_are_kept_for_the_current_update():
+    skeleton = np.zeros((33, 3), np.float32)
+    t = pose_tracker(skeleton)
+    t._foot_point(None, 3, (0, 0, 10, 40), True)
+    assert t._fresh_landmarks[3] is skeleton
+
+
+def test_landmarks_are_kept_even_when_pose_found_no_foot_point():
+    skeleton = np.zeros((33, 3), np.float32)
+    t = pose_tracker(skeleton, foot=(None, None))
+    pt, source = t._foot_point(None, 3, (0, 0, 10, 40), True)
+    assert source == "bbox" and t._fresh_landmarks[3] is skeleton
+
+
+def test_a_pose_estimator_without_last_landmarks_still_works():
+    t = pose_tracker(None)
+    t.pose_estimator = SimpleNamespace(extract_foot_point=lambda frame, bbox: ((10.0, 20.0), "foot"))
+    assert t._foot_point(None, 3, (0, 0, 10, 40), True) == ((10.0, 20.0), "foot")
+    assert t._fresh_landmarks == {}
+
+
+def test_update_hands_the_skeleton_to_the_player_observation_only_on_frames_where_pose_ran():
+    skeleton = np.ones((33, 3), np.float32)
+    t = pose_tracker(skeleton)
+    t.selector = SimpleNamespace(players={}, history={}, update=lambda idx, observations: {1: 7})
+    boxes, ids = np.asarray([[0, 0, 10, 40]], np.float32), np.asarray([7])
+    first = t.update(np.zeros((50, 50, 3), np.uint8), 0, boxes, ids, None)
+    assert first[1].landmarks is skeleton and first[1].track_id == 7
+
+    t.pose_every = 5                                   # next update: the cached foot offset, no pose call
+    t.pose_estimator = SimpleNamespace(last_landmarks=skeleton, extract_foot_point=lambda f, b: 1 / 0)
+    second = t.update(np.zeros((50, 50, 3), np.uint8), 1, boxes, ids, None)
+    assert second[1].landmarks is None and second[1].source == "cached"
+
+
+def test_set_pose_every_changes_the_cadence_and_never_goes_below_one():
+    t = pose_tracker(None)
+    t.set_pose_every(3)
+    assert t.pose_every == 3
+    t.set_pose_every(0)
+    assert t.pose_every == 1

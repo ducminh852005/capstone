@@ -41,6 +41,22 @@ METADATA_PATH = DATA_DIR / "metadata.csv"
 BENCHMARK_DIR = DATA_DIR / "benchmarks"
 """Output directory of scripts/benchmark_pipeline.py."""
 
+STANDARDIZE_CRF = 18
+"""x264 quality (CRF) of the 60 fps CFR copies made by core/video_processor.standardize_video_fps."""
+
+STANDARDIZE_PRESET = "medium"
+"""x264 preset of those CFR copies (they are made once, so size over speed)."""
+
+CLIPS_DIR = DATA_DIR / "clips"
+"""Output directory of scripts/analyze_clip.py: one sub-folder per analysed clip (git-ignored)."""
+
+TELESTRATOR_TEMPLATE_PATH = BACKEND_DIR / "web" / "telestrator.html"
+"""HTML template of the clip viewer (core/clip_report.py fills in the analysis JSON)."""
+
+CFR_FPS = 60.0
+"""Constant frame rate (frames per second) every analysed video is standardised to
+(scripts/process_all_videos.py). A video with another rate is analysed with its real rate, with a warning."""
+
 TRACKNET_WEIGHTS_PATH = MODELS_DIR / "TrackNet_best.pt"
 """TrackNetV3 checkpoint."""
 
@@ -444,6 +460,245 @@ SMASH_MIN_ANGLE = 10.0
 SMASH_MAX_ANGLE = 170.0
 """Maximum angle (degrees) of a smash's direction; with SMASH_MIN_ANGLE it bounds
 the accepted cone (0 = +x axis, 90 = straight down in image coordinates)."""
+
+
+# =====================================================================
+#  CLIP ANALYSIS  (clip_pipeline.py, clip_analysis.py, scripts/analyze_clip.py)
+# =====================================================================
+
+CLIP_PREROLL_S = 2.0
+"""Seconds analysed before the requested clip start and then excluded from the statistics. The
+trackers need them: TrackNet builds its background from TRACKNET_BG_FRAMES (60) frames and needs a
+window of 8 more before its first detection (~76 frames, 1.3 s at 60 fps), and the player selector
+needs ~30 in-court frames before it picks anybody."""
+
+CLIP_DEFAULT_FRAMES = 300
+"""Frames of a clip when scripts/analyze_clip.py is not given --frames (5 s at 60 fps: a rally or two)."""
+
+CLIP_MAX_PLAYERS = 2
+"""Near-half players tracked (and analysed one by one) per clip, so the viewer can offer a choice
+when a referee or a second person stands on the court. Passed to PlayerSelector(max_players)."""
+
+CLIP_YOLO_EVERY = 1
+"""YOLO+ByteTrack on every frame in clip mode: the clip is a few hundred frames, so the extra cost
+is small and the player boxes drawn over the video are never stale."""
+
+CLIP_POSE_EVERY = 1
+"""MediaPipe pose on every frame of the selected players in clip mode: the skeleton is drawn over
+the video and the hit analysis needs the wrist position within +-1 frame of the contact."""
+
+CLIP_POSE_VARIANT = "heavy"
+"""MediaPipe model of clip mode. The heavy model keeps the racket arm better than "lite" when the
+player is seen from behind at ~2 m (self-occlusion), at ~2x the cost per call."""
+
+CLIP_PREROLL_POSE_EVERY = 3
+"""Pose cadence (frames) of the selected players during the pre-roll: it only has to let the player
+selector lock on, and the statistics ignore those frames, so a cached foot offset between pose calls
+is enough (~15-25% of the pose calls of a clip are pre-roll). Set to CLIP_POSE_EVERY to disable."""
+
+CLIP_CUT_CRF = 18
+"""x264 quality (CRF) of the clip cut out of the source video. The same pixels are analysed and
+shown in the browser, so keep it high (18 is visually lossless)."""
+
+CLIP_CUT_PRESET = "veryfast"
+"""x264 preset of the clip cut (speed over file size: the clips are a few hundred frames)."""
+
+CLIP_CUT_GOP_FRAMES = 12
+"""Keyframe interval (frames) of the cut clip. A short GOP without B-frames makes stepping one
+frame backwards in the browser cheap and exact."""
+
+CLIP_EXPORT_PX_DECIMALS = 1
+"""Decimals kept for pixel coordinates in analysis.json (0.1 px is far below the detection noise)."""
+
+CLIP_EXPORT_WORLD_DECIMALS = 3
+"""Decimals kept for court coordinates (metres) in analysis.json: millimetres, far below the
+~1 cm calibration accuracy."""
+
+CLIP_SKELETON_MIN_SCORE = 0.4
+"""Landmark visibility below which a joint is exported as hidden (-1) and not drawn by the viewer (same
+as PoseEstimator.draw_landmarks)."""
+
+CLIP_EXPORT_SPEED_DECIMALS = 2
+"""Decimals kept for speeds (px/frame, body heights/s, m/s) and floor distances (m) in analysis.json."""
+
+CLIP_EXPORT_ANGLE_DECIMALS = 1
+"""Decimals kept for angles (degrees) in analysis.json."""
+
+CLIP_EXPORT_RATIO_DECIMALS = 3
+"""Decimals kept for distances in body heights and for times of flight (s) in analysis.json."""
+
+CLIP_EXPORT_CONFIDENCE_DECIMALS = 2
+"""Decimals kept for confidences and shares (0..1) in analysis.json."""
+
+CLIP_TRAIL_FRAMES = 45
+"""Frames of shuttle trail the viewer draws behind the current frame."""
+
+CLIP_MIN_PLAYER_FRAMES = 30
+"""A tracked person seen in fewer clip frames than this is not offered as a player in the viewer
+(a passer-by or a one-off tracker identity)."""
+
+# --- Pose ---
+POSE_MIN_SCORE = 0.5
+"""Landmark visibility (0..1) a joint needs to be used for a measurement (hand position, ...)."""
+
+POSE_CONTACT_WINDOW_FRAMES = 2
+"""Frames either side of a hit's contact frame searched for a skeleton when there is none on the
+contact frame itself (pose fails on a frame now and then)."""
+
+# --- Hit attribution (hit_events.py) ---
+# Initial guesses: there are no hand-labelled hits yet (see CLAUDE.md, Known issues).
+HITTER_MAX_WRIST_DIST_BODY = 0.5
+"""A hit belongs to a tracked player when one of his hand points (wrist, index fingertip) comes this
+close to the shuttle's path across the contact, in body heights (distance in px / the player's box
+height). The racket head is ~0.3 body heights beyond the wrist; a smash measured on tran04 gave 0.12."""
+
+HITTER_MIN_NEAR_CONFIDENCE = 0.5
+"""Confidence of a hit attributed at exactly HITTER_MAX_WRIST_DIST_BODY; it grows linearly to 1 as the
+hand gets closer to the shuttle."""
+
+HITTER_WINDOW_MARGIN_FRAMES = 2
+"""Frames added on each side of the contact window (last detection before the hit .. first detection
+after it) when looking for the hand: pose and shuttle detections are not perfectly synchronous."""
+
+HITTER_DEFAULT_WINDOW_FRAMES = 5
+"""Contact window (frames before the first detection after the hit) when no earlier detection of the
+shuttle is known: one default TrackNet stride (TRACKNET_BATCH_STRIDE)."""
+
+HITTER_MAX_PREV_GAP_FRAMES = 15
+"""How far back (frames) to look for the last detection before a hit. Older ones belong to another flight."""
+
+HITTER_LANDING_EXCLUDE_FRAMES = 8
+"""A track restart within this many frames of a landing call, with no hand near the shuttle, is the
+shuttle bouncing on the floor (the tracker sees a bounce as a direction reversal like a racket hit),
+not a hit by the opponent."""
+
+HITTER_FAR_CONFIDENCE = 0.3
+"""Confidence of a hit inferred to be the opponent's (no near hand close to the shuttle) that follows
+a hit of the near player, as the alternation of a singles rally requires. Low: it is only an inference."""
+
+HITTER_FAR_BREAK_CONFIDENCE = 0.2
+"""Same, when it does NOT alternate (it follows another inferred opponent hit, or opens a rally): a
+missed hit or a tracker glitch is as likely as a real opponent hit."""
+
+# --- Shot classification (shots.py) ---
+# Initial guesses: there are no hand-labelled shots yet (see CLAUDE.md, Known issues). The pose is 2D
+# and filmed from behind, and the shuttle's height is unknown, so these are weak rules, not measurements.
+SHOT_OVERHEAD_MIN_ABOVE_HEAD_BODY = -0.1
+"""The racket hand is overhead when its wrist is at least this far above the nose (body heights, i.e.
+pixels / the height of the player's box; positive = above). Negative: the racket head sits ~0.3 body
+heights beyond the wrist, so a wrist a little below the nose already hits overhead. The only smash
+measured on tran04 had its wrist 0.013 below the nose; this is not calibrated on more than that."""
+
+SHOT_LOW_MIN_BELOW_HIP_BODY = 0.0
+"""The racket hand is low when its wrist is at least this far below the hips (body heights)."""
+
+SHOT_SERVE_MAX_X_M = 4.7
+"""A serve is hit from behind this distance (m) from the near baseline: inside the service court
+(the short service line is at 4.72 m)."""
+
+SHOT_SMASH_MIN_ELBOW_DEG = 140.0
+"""Elbow angle (degrees, 180 = straight arm) above which an overhead hit counts as made with a
+fully extended arm: supporting evidence for a smash."""
+
+SHOT_SMASH_MIN_SPEED_BODY_PER_S = 2.5
+"""Shuttle speed right after the hit, in body heights per second (speed_px * fps / box height px), from
+which an overhead hit is a smash. Image-plane speed: a shot flying away from the camera looks slower."""
+
+SHOT_FLAT_ELEVATION_DEG = 10.0
+"""Direction of the shuttle right after the hit (degrees above the horizontal in the image): within
++-this it is flat, above it rises, below it falls."""
+
+SHOT_DROP_MAX_LANDING_FROM_NET_M = 2.5
+"""An overhead soft hit that lands within this distance (m) of the net is a drop."""
+
+SHOT_DROP_MAX_FLIGHT_S = 0.9
+"""An overhead soft hit that reaches the other side (next hit or landing) within this many seconds is a
+drop (a clear takes longer)."""
+
+SHOT_CLEAR_MIN_FLIGHT_S = 1.1
+"""An overhead hit that rises and flies at least this many seconds is a clear."""
+
+SHOT_LIFT_MIN_FLIGHT_S = 1.0
+"""A low hit that rises and flies at least this many seconds is a lift (lob)."""
+
+SHOT_NET_MAX_FLIGHT_S = 0.7
+"""A soft hit made at the net that flies at most this many seconds is a net shot."""
+
+SHOT_DRIVE_MIN_SPEED_BODY_PER_S = 2.0
+"""A flat hit at mid height faster than this (body heights per second) is a drive."""
+
+SHOT_DRIVE_MAX_FLIGHT_S = 0.6
+"""A drive reaches the other side within this many seconds."""
+
+SHOT_NO_POSE_MAX_CONF = 0.4
+"""Confidence ceiling of a shot classified without a skeleton (shuttle and court features only)."""
+
+SHOT_EVAL_TOL_FRAMES = 6
+"""Frames within which a predicted hit and a hand-labelled hit are the same one when shot types are
+scored (scripts/eval_shots.py). The hit's contact frame is refined to the hand's closest approach, so
+this is tighter than the +-12 frames of the raw hit detection (scripts/eval_events.py)."""
+
+SHOT_BASE_STRENGTH = 0.6
+"""A rule that matches on its required conditions alone has this strength (0..1); each supporting
+condition that also holds raises it linearly to 1. Shot confidence = hit confidence x strength."""
+
+RALLY_DEAD_TIME_S = 4.0
+"""Seconds without play (since the previous rally ended) before a hit is taken for a serve."""
+
+# --- Zones and movement (zones.py, movement.py) ---
+ZONE_DEPTH_EDGES_M = (2.2, 4.4)
+"""x (m from the near baseline) where the rear zone ends and the front zone begins: the near half
+(0..NET_X = 6.7 m) in three bands of about a third. Initial guess; the guideline asks for a 6-zone split
+(front / mid / rear x left / right)."""
+
+MOVE_SPEED_LEVELS_MPS = (0.5, 2.0, 4.0)
+"""Speed (m/s) edges of the levels standing, walking, running, sprinting (guideline: 0.5, 2 and 4 m/s)."""
+
+MOVE_SPEED_PERCENTILE = 95
+"""Percentile of the speed samples reported as the player's top speed (never the maximum: a single
+mis-tracked frame would set it)."""
+
+MOVE_STILL_SPEED_MPS = 0.5
+"""A player slower than this (m/s) is standing still: waiting position and rest are measured on it."""
+
+MOVE_REST_MIN_S = 2.0
+"""Seconds of standing still in a row that count as a rest (between points, not a split-step)."""
+
+MOVE_BASE_MIN_S = 0.5
+"""Seconds of standing still needed to call its centroid the player's waiting position."""
+
+MOVE_HOME_RADIUS_M = 0.75
+"""The player is back at the waiting position when within this distance (m) of it."""
+
+MOVE_RECOVERY_MAX_S = 3.0
+"""Longest wait (s) for the player to get back to the waiting position after a hit; later (or when
+the next hit comes first) the recovery is reported as not completed."""
+
+MOVE_MIN_VALID_RATIO = 0.6
+"""Below this fraction of frames with a usable position the movement numbers are marked unreliable."""
+
+MOVE_SMALL_SAMPLE_S = 10.0
+"""A clip analysed over less than this many seconds gives only a small sample of movement."""
+
+# --- Rally segmentation (rally.py) ---
+RALLY_MAX_HIT_GAP_S = 3.0
+"""Seconds between two hits after which the rally is considered over (shuttle dead, call missed). A
+high clear flies ~1.5-2 s, so this leaves room for a couple of missed detections."""
+
+RALLY_CLOSE_CALL_FACTOR = 0.5
+"""Winner confidence is multiplied by this when the landing call is a close call."""
+
+RALLY_RESTING_FACTOR = 0.7
+"""Winner confidence is multiplied by this when the landing was called from a resting shuttle
+(Call.method == "resting": the impact itself was not seen)."""
+
+RALLY_OWN_HALF_FACTOR = 0.5
+"""Winner confidence is multiplied by this when the shuttle landed on the half of the player who hit
+it last: a net fault, or (as likely) an opponent hit that was not detected."""
+
+RALLY_INFERRED_HITTER_CONFIDENCE = 0.3
+"""Confidence of the last hitter of a rally with no detected hit at all, inferred as the side opposite
+to where the shuttle landed."""
 
 
 # =====================================================================

@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pyflakes --version)",
+      "Bash(python -m pytest -q)"
+    ]
+  }
+}

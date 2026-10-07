@@ -2,6 +2,7 @@ import cv2
 import logging
 from collections import deque
 from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
 from ultralytics import YOLO
@@ -21,6 +22,9 @@ class PlayerObs:
     foot_px: tuple             # (x, y) full-frame pixels
     foot_world: tuple          # (x, y) meters, None without calibration
     source: str                # "foot" / "ankle" (MediaPipe), "cached" (offset), "bbox" (fallback, low confidence)
+    # MediaPipe skeleton (33, 3) of (x, y, score), full-frame pixels. Only on frames where pose ran
+    # for this track (every `pose_every`-th update), None in between.
+    landmarks: Optional[np.ndarray] = None
 
 
 class PlayerSelector:
@@ -190,11 +194,16 @@ class PlayerTracker:
         # {track_id: (dx / bbox_h, dy / bbox_h)} foot offset from the bbox bottom-centre
         self.foot_offsets = {}
         self._pose_tried = set()  # tracks that already had a first pose attempt
+        self._fresh_landmarks = {}  # {track_id: (33, 3) skeleton} of the tracks that ran pose in this update()
         self._n_updates = 0  # pose schedule counter (frame_idx may skip frames)
         self._detect_calls = 0  # yolo schedule counter, counts process() calls
         self._roi_cache = (None, None, None)  # (H id, frame shape, roi)
         self.last_boxes = np.empty((0, 4), np.float32)  # every person box of the last frame
         self.last_ids = np.empty((0,), np.int64)         # matching track ids of last_boxes
+
+    def set_pose_every(self, every):
+        """Change the pose cadence (see __init__) from the next process() call on."""
+        self.pose_every = max(int(every), 1)
 
     def track_frame(self, frame, persist=True):
         """Raw YOLO + ByteTrack result for one frame (class 0 = person)."""
@@ -243,6 +252,9 @@ class PlayerTracker:
         if track_id not in self._pose_tried or (self._n_updates + track_id) % every == 0:
             self._pose_tried.add(track_id)
             pt, source = self.pose_estimator.extract_foot_point(frame, bbox)
+            landmarks = getattr(self.pose_estimator, "last_landmarks", None)
+            if landmarks is not None:
+                self._fresh_landmarks[track_id] = landmarks
             if pt is not None:
                 self.foot_offsets[track_id] = ((pt[0] - bottom[0]) / bh, (pt[1] - bottom[1]) / bh)
                 return pt, source
@@ -263,6 +275,7 @@ class PlayerTracker:
         selects the player. Returns {player_id: PlayerObs}.
         """
         self._n_updates += 1
+        self._fresh_landmarks = {}
         player_tracks = {p["track"] for p in self.selector.players.values()}
         observations, details = {}, {}
         for box, tid in zip(boxes, ids):
@@ -295,7 +308,8 @@ class PlayerTracker:
         for pid, tid in selected.items():
             if tid in details:
                 bbox, foot_px, foot_world, source = details[tid]
-                players[pid] = PlayerObs(pid, tid, bbox, foot_px, foot_world, source)
+                players[pid] = PlayerObs(pid, tid, bbox, foot_px, foot_world, source,
+                                         self._fresh_landmarks.get(tid))
         return players
 
     def process(self, frame, frame_idx, H=None, H_inv=None):

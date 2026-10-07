@@ -7,6 +7,7 @@ from mediapipe.tasks.python import vision
 import os
 
 from . import config
+from .pose_features import POSE_CONNECTIONS  # noqa: F401  (pure module; re-exported for the demos)
 
 logger = logging.getLogger(__name__)
 
@@ -19,14 +20,6 @@ MODEL_FILES = {
 LEFT_FOOT = (29, 31, 27)
 RIGHT_FOOT = (30, 32, 28)
 
-POSE_CONNECTIONS = [
-    (0, 1), (1, 2), (2, 3), (3, 7), (0, 4), (4, 5), (5, 6), (6, 8),
-    (9, 10), (11, 12), (11, 13), (13, 15), (15, 17), (15, 19), (15, 21), (17, 19),
-    (12, 14), (14, 16), (16, 18), (16, 20), (16, 22), (18, 20),
-    (11, 23), (12, 24), (23, 24),
-    (23, 25), (24, 26), (25, 27), (26, 28),
-    (27, 29), (28, 30), (29, 31), (30, 32), (27, 31), (28, 32)
-]
 
 
 def _single_foot(landmarks, heel, toe, ankle, min_score):
@@ -99,6 +92,9 @@ class PoseEstimator:
             min_tracking_confidence=0.5
         )
         self.detector = vision.PoseLandmarker.create_from_options(options)
+        # Landmarks of the most recent detect_landmarks() call (None when it found nobody). Callers
+        # that only get a foot point back from extract_foot_point() read the skeleton from here.
+        self.last_landmarks = None
 
     @staticmethod
     def padded_crop_box(frame_shape, bbox, pad=0.15):
@@ -113,7 +109,9 @@ class PoseEstimator:
         Run MediaPipe on a padded crop around bbox. Padding matters: with a tight crop the
         feet sit on the crop border and the landmarker often misses them.
         Returns an array (33, 3) of (x, y, score) in full-frame pixels, or None.
+        The result is also kept in `last_landmarks`.
         """
+        self.last_landmarks = None
         cx1, cy1, cx2, cy2 = self.padded_crop_box(frame.shape, bbox, pad)
         crop = frame[cy1:cy2, cx1:cx2]
         if crop.size == 0:
@@ -130,6 +128,7 @@ class PoseEstimator:
         for i, lm in enumerate(result.pose_landmarks[0]):
             presence = getattr(lm, 'presence', None)
             out[i] = (lm.x * cw + cx1, lm.y * ch + cy1, min(lm.visibility, presence if presence is not None else 1.0))
+        self.last_landmarks = out
         return out
 
     def extract_foot_point(self, frame, bbox, pad=0.15):

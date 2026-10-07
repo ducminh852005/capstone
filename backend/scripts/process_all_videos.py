@@ -27,7 +27,7 @@ def process_all_videos():
         output_file = str(cfr_dir / filename)
 
         print(f"\nProcessing: {filename}")
-        success = standardize_video_fps(input_file, output_file, target_fps=60)
+        success = standardize_video_fps(input_file, output_file, target_fps=config.CFR_FPS)
 
         if success:
             print(f"Successfully processed {filename}")

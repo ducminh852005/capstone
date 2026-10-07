@@ -122,7 +122,7 @@ cd backend
 .\venv\Scripts\activate
 python -m pytest -q
 ```
-Only `backend/tests` is collected (`backend/pytest.ini`). The `scripts/demo_*.py` files are interactive
+Only `backend/tests` is collected (`backend/pytest.ini`). `python -m pytest -q -m "not slow"` skips the ~14 tests that take seconds (1080p detector frames, real TrackNet/YOLO weights) and runs in about 15 s instead of 45-65 s. The `scripts/demo_*.py` files are interactive
 demos, not tests. Development rules are in `CLAUDE.md`.
 
 Headless benchmark of the player + shuttle pipeline (per-stage ms/frame and quality proxies):
@@ -134,6 +134,18 @@ pass `--shuttle-backend cv` to use the older classical background-subtraction de
 (no GPU/weights needed). Quality numbers are proxies (ID stability, track continuity, shuttle
 jumps) until hand labels exist. Laptop GPUs throttle: compare runs made back to back, not runs
 from different sessions.
+
+## 6b. Analyse a Clip (telestrator)
+
+Needs `ffmpeg` on the PATH, the calibration (step 5) and the model weights. Cuts a short clip out of a
+60 fps video, runs the player and shuttle pipeline over it and writes a viewer:
+```cmd
+cd backend
+python scripts\analyze_clip.py ..\data\cfr\tran04_cam1.mp4 --start 250 --frames 300
+```
+Open the printed `index.html` (in `data\clips\<name>\`) in Chrome or Edge: step through the frames, pick the
+player, and draw arrows on the video (arrows on the floor are measured in metres). Details are in
+`backend/README.md`, section I.
 
 ## 7. Running the Application (Coming Soon)
 

@@ -27,6 +27,7 @@ backend/models/
 # Generated artifacts
 data/highlights.html
 data/missed_bounces.txt
+data/clips/
 
 # Local databases and downloaded checkpoint archive
 *.db
